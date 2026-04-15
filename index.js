@@ -36,7 +36,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 const CONFIG = {
   // IA — Configuración para Gemini
   GEMINI_API_KEY:          process.env.GEMINI_API_KEY || cargarEnvKey(),
-  GEMINI_MODEL:            "gemini-1.5-flash-latest", // Modelo rápido y económico, ideal para chats
+  GEMINI_MODEL:            "gemini-1.5-flash", // Modelo rápido y económico, ideal para chats
   MAX_TOKENS_RESPUESTA:    500,
 
   // Archivos
