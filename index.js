@@ -53,7 +53,7 @@ const qrcode = require("qrcode-terminal");
 const CONFIG = {
   // IA — Google Gemini
   GEMINI_API_KEY:          process.env.GEMINI_API_KEY || cargarEnvKey(),
-  GEMINI_MODEL:            "gemini-2.5-flash-Lite",
+  GEMINI_MODEL:            "gemini-2.5-flash",
   MAX_TOKENS_RESPUESTA:    500,
 
   // Archivos
