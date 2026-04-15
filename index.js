@@ -28,9 +28,9 @@ import path from "path";
 
 const CONFIG = {
   // Cambia a true para usar código de emparejamiento en vez de QR
-  USE_PAIRING_CODE: process.argv.includes("--pairing") || false,
+  USE_PAIRING_CODE: process.argv.includes("--pairing") || true,
   // Tu clave de API de Anthropic (o usa variable de entorno)
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || "",
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || "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",
   AUTH_FOLDER: "auth_info_baileys",
   DB_EMPRESA: "empresa.json",
   DB_CONVERSACIONES: "conversaciones.json",
