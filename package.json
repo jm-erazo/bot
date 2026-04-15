@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-bot-baileys",
+  "version": "3.2.0",
+  "description": "WhatsApp Bot Empresarial con Baileys v7 + Google Gemini AI",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "baileys": "latest",
+    "@hapi/boom": "^10.0.1",
+    "pino": "^9.0.0",
+    "@google/generative-ai": "^0.24.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
