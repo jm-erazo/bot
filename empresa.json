@@ -1,0 +1,29 @@
+{
+  "nombre": "Mi Empresa S.A.S.",
+  "sector": "Tecnología",
+  "descripcion": "Empresa dedicada al desarrollo de software y soluciones digitales.",
+  "horario": "Lunes a Viernes de 8:00 AM a 6:00 PM",
+  "telefono": "+57 300 000 0000",
+  "email": "info@miempresa.com",
+  "direccion": "Calle 100 #15-20, Bogotá, Colombia",
+  "productos": [
+    "Desarrollo de aplicaciones web",
+    "Chatbots empresariales",
+    "Consultoría tecnológica"
+  ],
+  "politicas": {
+    "devolucion": "30 días de garantía en todos los productos.",
+    "envio": "Entrega digital inmediata tras confirmación de pago.",
+    "pago": "Aceptamos transferencia, PSE, tarjeta de crédito y débito."
+  },
+  "faqs": [
+    {
+      "pregunta": "¿Cuánto tarda un proyecto?",
+      "respuesta": "Entre 2 y 8 semanas según la complejidad."
+    },
+    {
+      "pregunta": "¿Ofrecen soporte post-venta?",
+      "respuesta": "Sí, 3 meses de soporte gratuito incluido."
+    }
+  ]
+}
