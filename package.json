@@ -12,7 +12,7 @@
     "baileys": "latest",
     "@hapi/boom": "^10.0.1",
     "pino": "^9.0.0", 
-    "@google/generative-ai": "^0.22.0"
+    "@google/generative-ai": "latest"
   },
   "engines": {
     "node": ">=18.0.0"
