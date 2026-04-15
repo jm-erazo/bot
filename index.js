@@ -1,18 +1,18 @@
 /**
- * WhatsApp Bot Empresarial — v3.0
+ * WhatsApp Bot Empresarial — v3.0 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
  * Fixes v3.0:
- *   🔧 CORREGIDO: Modelo Anthropic ahora usa el string correcto
- *   🔧 CORREGIDO: Pairing code — se solicita fuera del event handler con delay
- *   🔧 CORREGIDO: makeCacheableSignalKeyStore para mejor rendimiento en v7
- *   ✨ NUEVO: Anti-spam (rate limiting por contacto)
- *   ✨ NUEVO: Comandos !faq, !politicas, !horario, !traducir, !sticker-texto
- *   ✨ NUEVO: Comando !encuesta para hacer votaciones rápidas
- *   ✨ NUEVO: Comando !estado para ver estado del bot
- *   ✨ NUEVO: Guardar API Key en .env automáticamente
- *   ✨ NUEVO: Respuesta fuera de horario configurable
- *   ✨ NUEVO: Manejo de mensajes en grupos (opcional)
- *   ✨ NUEVO: Comando !recargar para recargar empresa.json sin reiniciar
+ * 🔧 CORREGIDO: Pairing code — se solicita fuera del event handler con delay
+ * 🔧 CORREGIDO: makeCacheableSignalKeyStore para mejor rendimiento en v7
+ * ✨ NUEVO: Anti-spam (rate limiting por contacto)
+ * ✨ NUEVO: Comandos !faq, !politicas, !horario, !traducir, !sticker-texto
+ * ✨ NUEVO: Comando !encuesta para hacer votaciones rápidas
+ * ✨ NUEVO: Comando !estado para ver estado del bot
+ * ✨ NUEVO: Guardar API Key en .env automáticamente
+ * ✨ NUEVO: Respuesta fuera de horario configurable
+ * ✨ NUEVO: Manejo de mensajes en grupos (opcional)
+ * ✨ NUEVO: Comando !recargar para recargar empresa.json sin reiniciar
+ * 🤖 ACTUALIZADO: IA cambiada de Anthropic (Claude) a Google (Gemini)
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -28,13 +28,15 @@ import pino from "pino";
 import readline from "readline";
 import fs from "fs";
 import path from "path";
+// Importamos la librería de Google Gemini
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // ─── Configuración base ───────────────────────────────────────────────────────
 
 const CONFIG = {
-  // IA — CORREGIDO: modelo con string exacto requerido por la API
-  ANTHROPIC_API_KEY:       process.env.ANTHROPIC_API_KEY || cargarEnvKey(),
-  ANTHROPIC_MODEL:         "claude-haiku-4-5-20251001",   // ← string corregido
+  // IA — Configuración para Gemini
+  GEMINI_API_KEY:          process.env.GEMINI_API_KEY || cargarEnvKey(),
+  GEMINI_MODEL:            "gemini-1.5-flash", // Modelo rápido y económico, ideal para chats
   MAX_TOKENS_RESPUESTA:    500,
 
   // Archivos
@@ -61,7 +63,8 @@ function cargarEnvKey() {
   try {
     if (fs.existsSync(".env")) {
       const contenido = fs.readFileSync(".env", "utf-8");
-      const match = contenido.match(/^ANTHROPIC_API_KEY=(.+)$/m);
+      // Cambiado de ANTHROPIC_API_KEY a GEMINI_API_KEY
+      const match = contenido.match(/^GEMINI_API_KEY=(.+)$/m);
       if (match) return match[1].trim();
     }
   } catch (_) {}
@@ -72,10 +75,11 @@ function guardarEnvKey(key) {
   try {
     let contenido = "";
     if (fs.existsSync(".env")) contenido = fs.readFileSync(".env", "utf-8");
-    if (contenido.match(/^ANTHROPIC_API_KEY=.*/m)) {
-      contenido = contenido.replace(/^ANTHROPIC_API_KEY=.*/m, `ANTHROPIC_API_KEY=${key}`);
+    // Cambiado de ANTHROPIC_API_KEY a GEMINI_API_KEY
+    if (contenido.match(/^GEMINI_API_KEY=.*/m)) {
+      contenido = contenido.replace(/^GEMINI_API_KEY=.*/m, `GEMINI_API_KEY=${key}`);
     } else {
-      contenido += (contenido.endsWith("\n") || !contenido ? "" : "\n") + `ANTHROPIC_API_KEY=${key}\n`;
+      contenido += (contenido.endsWith("\n") || !contenido ? "" : "\n") + `GEMINI_API_KEY=${key}\n`;
     }
     fs.writeFileSync(".env", contenido, "utf-8");
   } catch (e) {
@@ -178,22 +182,22 @@ function registrarMensaje(jid, rol, contenido) {
   guardarJSON(CONFIG.DB_CONVERSACIONES, conversaciones);
 }
 
+// Adaptamos el historial para el formato que espera Gemini (user y model)
 function historialIA(jid) {
   return (conversaciones[jid] || []).slice(-20).map((m) => ({
-    role:    m.rol === "bot" ? "assistant" : "user",
-    content: m.contenido,
+    role:    m.rol === "bot" ? "model" : "user", // Gemini usa 'model' en lugar de 'assistant'
+    parts:   [{ text: m.contenido }],
   }));
 }
 
-// ─── IA con Claude (Anthropic API) ───────────────────────────────────────────
-// CORRECCIÓN PRINCIPAL: Usamos el model string exacto "claude-haiku-4-5-20251001"
+// ─── IA con Google Gemini ────────────────────────────────────────────────────
 
 async function consultarIA(jid, preguntaUsuario) {
-  if (!CONFIG.ANTHROPIC_API_KEY) {
-    return "⚠️ La IA no está configurada. Agrega tu ANTHROPIC_API_KEY al iniciar el bot.";
+  if (!CONFIG.GEMINI_API_KEY) {
+    return "⚠️ La IA no está configurada. Agrega tu GEMINI_API_KEY al iniciar el bot.";
   }
 
-  const sistemPrompt = `Eres el asistente virtual de ${empresa.nombre || "la empresa"}.
+  const systemPrompt = `Eres el asistente virtual de ${empresa.nombre || "la empresa"}.
 Sector: ${empresa.sector || "N/A"}
 Descripción: ${empresa.descripcion || "N/A"}
 Horario: ${empresa.horario || "N/A"}
@@ -211,43 +215,43 @@ Instrucciones:
 - Si el usuario saluda, salúdalo de vuelta presentándote como asistente de ${empresa.nombre || "la empresa"}.
 - Máximo 3 párrafos por respuesta para ser conciso en WhatsApp.`;
 
-  const mensajes = [
-    ...historialIA(jid),
-    { role: "user", content: preguntaUsuario },
-  ];
-
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type":      "application/json",
-        "x-api-key":         CONFIG.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model:      CONFIG.ANTHROPIC_MODEL,
-        max_tokens: CONFIG.MAX_TOKENS_RESPUESTA,
-        system:     sistemPrompt,
-        messages:   mensajes,
-      }),
+    // Inicializamos el SDK de Google con la API Key
+    const genAI = new GoogleGenerativeAI(CONFIG.GEMINI_API_KEY);
+    
+    // Obtenemos el modelo
+    const model = genAI.getGenerativeModel({ 
+        model: CONFIG.GEMINI_MODEL,
+        systemInstruction: systemPrompt // Aquí inyectamos el contexto de la empresa
     });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      const tipo = err?.error?.type || res.status;
-      console.error(`❌ Error API Anthropic [${tipo}]:`, err?.error?.message || "");
-      if (tipo === "authentication_error") {
-        CONFIG.ANTHROPIC_API_KEY = "";
-        return "🔑 La API Key de IA es inválida. Reinicia el bot y verifica tu clave.";
-      }
-      return "Lo siento, hubo un problema con el asistente IA. Intenta de nuevo en unos momentos.";
+    // Recuperamos el historial adaptado a Gemini
+    const historial = historialIA(jid);
+
+    // Iniciamos la sesión de chat con el historial previo
+    const chatSession = model.startChat({
+      history: historial,
+      generationConfig: {
+        maxOutputTokens: CONFIG.MAX_TOKENS_RESPUESTA,
+      },
+    });
+
+    // Enviamos el nuevo mensaje
+    const result = await chatSession.sendMessage(preguntaUsuario);
+    const response = await result.response;
+    
+    return response.text() || "No pude generar una respuesta.";
+
+  } catch (e) {
+    console.error("❌ Error conectando con Gemini API:", e.message);
+    
+    // Manejo de errores específicos (ej. API Key inválida)
+    if (e.message.includes("API key not valid") || e.status === 403) {
+       CONFIG.GEMINI_API_KEY = "";
+       return "🔑 La API Key de IA es inválida. Reinicia el bot y verifica tu clave.";
     }
 
-    const data = await res.json();
-    return data.content?.[0]?.text || "No pude generar una respuesta.";
-  } catch (e) {
-    console.error("❌ Error conectando con IA:", e.message);
-    return "Error de conexión con el servicio de IA. Intenta más tarde.";
+    return "Lo siento, hubo un problema con el asistente IA. Intenta de nuevo en unos momentos.";
   }
 }
 
@@ -323,21 +327,21 @@ async function manejarComando(sock, jid, texto, senderName, msgKey) {
     case "!menu":
     case "!ayuda":
     case "!help": {
-      const ia = CONFIG.ANTHROPIC_API_KEY ? "✅" : "❌";
+      const ia = CONFIG.GEMINI_API_KEY ? "✅" : "❌";
       await send(sock, jid, `╔═══════════════════════════════╗
-║    🤖 *BOT EMPRESARIAL WA*    ║
+║    🤖 *BOT EMPRESARIAL WA* ║
 ╚═══════════════════════════════╝
 
 📋 *INFORMACIÓN*
-  🙋 *!hola*                 — Saludo personalizado
-  ℹ️  *!info*                 — Estado del bot
-  🕐 *!hora*                 — Fecha y hora Bogotá
-  🏢 *!empresa*              — Info de la empresa
-  📞 *!contacto*             — Datos de contacto
-  💼 *!servicios*            — Productos/servicios
-  📋 *!faq*                  — Preguntas frecuentes
-  📜 *!politicas*            — Políticas de la empresa
-  🕐 *!horario*              — Horario de atención
+  🙋 *!hola* — Saludo personalizado
+  ℹ️  *!info* — Estado del bot
+  🕐 *!hora* — Fecha y hora Bogotá
+  🏢 *!empresa* — Info de la empresa
+  📞 *!contacto* — Datos de contacto
+  💼 *!servicios* — Productos/servicios
+  📋 *!faq* — Preguntas frecuentes
+  📜 *!politicas* — Políticas de la empresa
+  🕐 *!horario* — Horario de atención
 
 📊 *HERRAMIENTAS*
   🧮 *!calc* [expr]          — Calculadora
@@ -348,16 +352,16 @@ async function manejarComando(sock, jid, texto, senderName, msgKey) {
   🌐 *!traducir* [texto]     — Traducir al inglés con IA
 
 🎮 *DIVERSIÓN*
-  😂 *!chiste*               — Chiste aleatorio
-  🏓 *!ping*                 — Latencia del bot
+  😂 *!chiste* — Chiste aleatorio
+  🏓 *!ping* — Latencia del bot
 
 ⚙️  *CONFIGURACIÓN*
-  🗑️  *!olvidar*             — Borrar historial de chat
-  🔄 *!recargar*             — Recargar datos empresa.json
+  🗑️  *!olvidar* — Borrar historial de chat
+  🔄 *!recargar* — Recargar datos empresa.json
 
 🤖 *IA [${ia}]:* Escribe cualquier mensaje sin "!" y el asistente inteligente responderá.
 
-_Powered by Baileys + Claude AI_`);
+_Powered by Baileys + Google Gemini_`);
       break;
     }
 
@@ -379,7 +383,7 @@ _Powered by Baileys + Claude AI_`);
     // ── !info ─────────────────────────────────────────────────────────────
     case "!info":
     case "!estado": {
-      const iaStatus  = CONFIG.ANTHROPIC_API_KEY ? `✅ Activa (${CONFIG.ANTHROPIC_MODEL})` : "❌ Sin API Key";
+      const iaStatus  = CONFIG.GEMINI_API_KEY ? `✅ Activa (${CONFIG.GEMINI_MODEL})` : "❌ Sin API Key";
       const jidsActivos = Object.keys(conversaciones).length;
       await send(sock, jid, `🤖 *Estado del Bot*
 
@@ -388,13 +392,13 @@ _Powered by Baileys + Claude AI_`);
 ⚡ *Runtime:* Node.js ${process.version}
 🖥️  *Plataforma:* ${process.platform}
 ⏱️  *Uptime:* ${formatUptime(process.uptime())}
-🧠 *IA Claude:* ${iaStatus}
+🧠 *IA Gemini:* ${iaStatus}
 🏢 *Empresa:* ${empresa.nombre || "No configurada"}
 💬 *Conversaciones:* ${jidsActivos} contacto(s)
 🛡️  *Anti-spam:* ✅ Activo (${CONFIG.RATE_LIMIT_MAX} msg/min)
 👥 *Grupos:* ${CONFIG.RESPONDER_GRUPOS ? "✅ Responde" : "❌ Ignora"}
 
-_Hecho con ❤️ usando Baileys + Claude AI_`);
+_Hecho con ❤️ usando Baileys + Google Gemini_`);
       break;
     }
 
@@ -578,34 +582,23 @@ _Si estás fuera de horario, deja tu mensaje y te responderemos lo antes posible
         await send(sock, jid, "🌐 Uso: *!traducir [texto]*\nEjemplo: !traducir Buenos días a todos");
         break;
       }
-      if (!CONFIG.ANTHROPIC_API_KEY) {
+      if (!CONFIG.GEMINI_API_KEY) {
         await send(sock, jid, "❌ La traducción requiere la IA activa. Configura tu API Key.");
         break;
       }
       const textoOriginal = args.join(" ");
       await send(sock, jid, "🌐 Traduciendo...");
       try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": CONFIG.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
-            model: CONFIG.ANTHROPIC_MODEL,
-            max_tokens: 300,
-            messages: [{
-              role: "user",
-              content: `Traduce el siguiente texto al inglés. Responde SOLO con la traducción, sin explicaciones:\n\n${textoOriginal}`,
-            }],
-          }),
-        });
-        if (!res.ok) throw new Error("API error");
-        const data = await res.json();
-        const traduccion = data.content?.[0]?.text || "No se pudo traducir.";
-        await send(sock, jid, `🌐 *Traducción:*\n\n🇨🇴 _${textoOriginal}_\n🇺🇸 *${traduccion}*`);
-      } catch {
+        // También cambiamos la traducción para que use Gemini
+        const genAI = new GoogleGenerativeAI(CONFIG.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: CONFIG.GEMINI_MODEL });
+        
+        const result = await model.generateContent(`Traduce el siguiente texto al inglés. Responde SOLO con la traducción, sin explicaciones:\n\n${textoOriginal}`);
+        const traduccion = result.response.text() || "No se pudo traducir.";
+        
+        await send(sock, jid, `🌐 *Traducción:*\n\n🇨🇴 _${textoOriginal}_\n🇺🇸 *${traduccion.trim()}*`);
+      } catch (e) {
+        console.error("Error traduciendo con Gemini:", e.message);
         await send(sock, jid, "❌ Error al traducir. Intenta de nuevo.");
       }
       break;
@@ -734,8 +727,8 @@ async function menuInicio() {
   console.log("║   🤖  WhatsApp Bot v3.0 — Configuración  ║");
   console.log("╚══════════════════════════════════════════╝\n");
 
-  // ── Paso 1: API Key de Anthropic ──────────────────────────────────────────
-  console.log("┌─ PASO 1: Clave de API de Anthropic (IA) ─────────────────┐");
+  // ── Paso 1: API Key de Gemini ──────────────────────────────────────────
+  console.log("┌─ PASO 1: Clave de API de Google Gemini (IA) ─────────────┐");
   console.log("│  1) Configurar / validar API Key                         │");
   console.log("│  2) Omitir (el bot funcionará sin respuestas de IA)      │");
   console.log("└──────────────────────────────────────────────────────────┘");
@@ -747,51 +740,35 @@ async function menuInicio() {
   }
 
   if (opcionAPI === "1") {
-    const keyActual = CONFIG.ANTHROPIC_API_KEY;
+    const keyActual = CONFIG.GEMINI_API_KEY;
     if (keyActual) {
       const preview = `${keyActual.slice(0, 14)}${"*".repeat(Math.max(0, keyActual.length - 14))}`;
       console.log(`\n🔑 API Key detectada: ${preview}`);
       const cambiar = await pregunta("¿Deseas cambiarla? [s/N]: ");
       if (cambiar.toLowerCase() === "s") {
-        CONFIG.ANTHROPIC_API_KEY = await pregunta("Ingresa la nueva API Key: ");
+        CONFIG.GEMINI_API_KEY = await pregunta("Ingresa la nueva API Key: ");
       }
     } else {
-      const ingresada = await pregunta("Ingresa tu API Key de Anthropic (sk-ant-...): ");
-      CONFIG.ANTHROPIC_API_KEY = ingresada.trim();
+      const ingresada = await pregunta("Ingresa tu API Key de Gemini (AIzaSy...): ");
+      CONFIG.GEMINI_API_KEY = ingresada.trim();
     }
 
-    if (CONFIG.ANTHROPIC_API_KEY) {
+    if (CONFIG.GEMINI_API_KEY) {
       process.stdout.write("🔍 Validando API Key... ");
       try {
-        // CORRECCIÓN: Usar el model string correcto con el sufijo de fecha
-        const testRes = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type":      "application/json",
-            "x-api-key":         CONFIG.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
-            model:      CONFIG.ANTHROPIC_MODEL,   // ← "claude-haiku-4-5-20251001"
-            max_tokens: 10,
-            messages:   [{ role: "user", content: "ping" }],
-          }),
-        });
+        // Validamos la clave haciendo una petición simple a Gemini
+        const genAI = new GoogleGenerativeAI(CONFIG.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: CONFIG.GEMINI_MODEL });
+        
+        await model.generateContent("ping");
 
-        if (testRes.ok) {
-          console.log("✅ API Key válida.\n");
-          guardarEnvKey(CONFIG.ANTHROPIC_API_KEY);
-          console.log("💾 API Key guardada en .env para próximas sesiones.\n");
-        } else {
-          const errData = await testRes.json().catch(() => ({}));
-          const tipo    = errData?.error?.type || testRes.status;
-          const mensaje = errData?.error?.message || "";
-          console.log(`❌ API Key inválida.\n   Tipo: ${tipo}\n   Detalle: ${mensaje}\n   El bot continuará sin IA.\n`);
-          CONFIG.ANTHROPIC_API_KEY = "";
-        }
+        console.log("✅ API Key válida.\n");
+        guardarEnvKey(CONFIG.GEMINI_API_KEY);
+        console.log("💾 API Key guardada en .env para próximas sesiones.\n");
+        
       } catch (e) {
-        console.log(`⚠️  No se pudo validar (${e.message}).\n   Verifica tu conexión. El bot continuará sin IA.\n`);
-        CONFIG.ANTHROPIC_API_KEY = "";
+        console.log(`❌ API Key inválida.\n   Detalle: ${e.message}\n   El bot continuará sin IA.\n`);
+        CONFIG.GEMINI_API_KEY = "";
       }
     } else {
       console.log("⚠️  No ingresaste una API Key. El bot continuará sin IA.\n");
@@ -932,7 +909,7 @@ async function startBot(usarPairingCode, telefonoPairing) {
       console.log("─────────────────────────────────────────────────────────");
       console.log("  Comandos: !menu !hola !empresa !calc !clima !recordar !faq");
       console.log("  IA: cualquier mensaje sin '!' activa el asistente");
-      console.log(`  IA activa: ${CONFIG.ANTHROPIC_API_KEY ? "✅ Sí" : "❌ No (sin API Key)"}`);
+      console.log(`  IA activa: ${CONFIG.GEMINI_API_KEY ? "✅ Sí" : "❌ No (sin API Key)"}`);
       console.log("─────────────────────────────────────────────────────────\n");
     }
   });
