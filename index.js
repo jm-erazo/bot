@@ -30,13 +30,15 @@ import fs from "fs";
 import path from "path";
 // Importamos la librería de Google Gemini
 import { GoogleGenerativeAI } from "@google/generative-ai";
+// QR en terminal (reemplaza printQRInTerminal deprecado en Baileys v7)
+import qrcode from "qrcode-terminal";
 
 // ─── Configuración base ───────────────────────────────────────────────────────
 
 const CONFIG = {
   // IA — Configuración para Gemini
   GEMINI_API_KEY:          process.env.GEMINI_API_KEY || cargarEnvKey(),
-  GEMINI_MODEL:            "gemini-1.5-flash", // Modelo rápido y económico, ideal para chats
+  GEMINI_MODEL:            "gemini-2.0-flash", // Modelo rápido y actual (reemplaza gemini-1.5-flash)
   MAX_TOKENS_RESPUESTA:    500,
 
   // Archivos
@@ -244,11 +246,19 @@ Instrucciones:
 
   } catch (e) {
     console.error("❌ Error conectando con Gemini API:", e.message);
-    
-    // Manejo de errores específicos (ej. API Key inválida)
-    if (e.message.includes("API key not valid") || e.status === 403) {
-       CONFIG.GEMINI_API_KEY = "";
-       return "🔑 La API Key de IA es inválida. Reinicia el bot y verifica tu clave.";
+
+    // API Key inválida o permisos insuficientes
+    if (e.message.includes("API key not valid") || e.message.includes("API_KEY_INVALID") || e.status === 403) {
+      CONFIG.GEMINI_API_KEY = "";
+      return "🔑 La API Key de IA es inválida. Reinicia el bot y verifica tu clave en aistudio.google.com.";
+    }
+    // Modelo no encontrado — ocurre si el nombre del modelo está desactualizado
+    if (e.message.includes("not found") || e.message.includes("404") || e.message.includes("INVALID_ARGUMENT")) {
+      return "⚠️ Modelo de IA no disponible. Contacta al administrador del bot.";
+    }
+    // Cuota agotada
+    if (e.message.includes("quota") || e.message.includes("429") || e.message.includes("RESOURCE_EXHAUSTED")) {
+      return "⏳ Límite de uso de IA alcanzado. Intenta de nuevo en un momento.";
     }
 
     return "Lo siento, hubo un problema con el asistente IA. Intenta de nuevo en unos momentos.";
@@ -827,7 +837,8 @@ async function startBot(usarPairingCode, telefonoPairing) {
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
     logger,
-    printQRInTerminal: !usarPairingCode,
+    // printQRInTerminal DEPRECADO en Baileys v7 — usamos qrcode-terminal en connection.update
+    printQRInTerminal: false,
     // CORREGIDO: Browsers.ubuntu funciona mejor para pairing code en v7
     browser: usarPairingCode ? Browsers.ubuntu("Chrome") : Browsers.windows("Chrome"),
     syncFullHistory:            false,
@@ -875,7 +886,13 @@ async function startBot(usarPairingCode, telefonoPairing) {
     const { connection, lastDisconnect, qr } = update;
 
     if (!usarPairingCode && qr) {
-      console.log("📱 QR generado. Escanea desde WhatsApp → Dispositivos vinculados → Vincular dispositivo\n");
+      // CORRECCIÓN: printQRInTerminal está deprecado. Dibujamos el QR manualmente.
+      console.log("\n╔══════════════════════════════════════════╗");
+      console.log("║   📱 ESCANEA ESTE CÓDIGO QR EN WHATSAPP  ║");
+      console.log("╚══════════════════════════════════════════╝\n");
+      qrcode.generate(qr, { small: true });
+      console.log("\n👉 WhatsApp → Dispositivos vinculados → Vincular dispositivo");
+      console.log("⏳ El QR expira en ~60 segundos. Si vence, aparecerá uno nuevo.\n");
     }
 
     if (connection === "close") {
