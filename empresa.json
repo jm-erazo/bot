@@ -1,38 +1,254 @@
 {
-  "nombre": "Mi Empresa S.A.S.",
-  "sector": "Tecnología",
-  "descripcion": "Empresa dedicada al desarrollo de software y soluciones digitales.",
-  "horario": "Lunes a Viernes de 8:00 AM a 6:00 PM",
+  "_meta": {
+    "perfil": "Empresa simulada del escenario controlado EP-01",
+    "descripcion_perfil": "Microempresa de servicios de Santiago de Cali, subsector consultoría, con tres puestos de atención y WhatsApp Business como canal principal (180 a 250 conversaciones mensuales).",
+    "naturaleza": "Perfil simulado con fines académicos. No corresponde a una empresa real ni contiene datos personales de terceros.",
+    "version_perfil": "2.0",
+    "actualizado": "2026-02-10",
+    "nota_divulgacion": "Los bloques identidad, catalogo, politicas, faqs, clientes_objetivo y canales_atencion son de cara al cliente. Los bloques organizacion, procesos y estrategia son de uso interno y el asistente no debe revelarlos (ver el bloque divulgacion)."
+  },
+
+  "nombre": "Vértice Consultoría Digital S.A.S.",
+  "sector": "Consultoría tecnológica y transformación digital para Mipymes",
+  "descripcion": "Firma caleña de consultoría que ayuda a micro, pequeñas y medianas empresas a ordenar sus procesos y adoptar tecnología sin frenar su operación. Trabajamos por diagnósticos y proyectos cortos, con entregables concretos y acompañamiento cercano.",
+
+  "horario": "Lunes a viernes de 8:00 a. m. a 6:00 p. m. (hora de Colombia)",
   "horario_inicio": 8,
   "horario_fin": 18,
   "dias_habil": [1, 2, 3, 4, 5],
-  "telefono": "+57 300 000 0000",
-  "email": "info@miempresa.com",
-  "direccion": "Calle 100 #15-20, Bogotá, Colombia",
+
+  "telefono": "+57 602 485 7130",
+  "email": "contacto@verticeconsultoria.co",
+  "direccion": "Avenida 6N #23-45, oficina 502, Barrio Granada, Santiago de Cali, Valle del Cauca",
+
   "productos": [
-    "Desarrollo de aplicaciones web",
-    "Chatbots empresariales",
-    "Consultoría tecnológica"
+    "Diagnóstico digital empresarial",
+    "Consultoría en optimización de procesos",
+    "Acompañamiento en adopción de herramientas digitales",
+    "Automatización de atención al cliente",
+    "Formación y transferencia de conocimiento"
   ],
+
   "politicas": {
-    "devolucion": "30 días de garantía en todos los productos.",
-    "envio": "Entrega digital inmediata tras confirmación de pago.",
-    "pago": "Aceptamos transferencia, PSE, tarjeta de crédito y débito."
+    "pago": "Se factura el 50 % al firmar la propuesta y el 50 % restante contra la entrega del informe final. Aceptamos transferencia, PSE y tarjeta. Todos los precios se expresan en pesos colombianos y no incluyen IVA.",
+    "cancelacion": "La cancelación puede solicitarse hasta 48 horas antes de la sesión o del inicio del proyecto, sin costo. Con menos de 48 horas se retiene el 20 % del valor del anticipo para cubrir la agenda reservada.",
+    "confidencialidad": "Toda la información del cliente se maneja bajo acuerdo de confidencialidad firmado antes de iniciar. No compartimos datos, cifras ni nombres de clientes con terceros, y los entregables son de propiedad exclusiva del cliente.",
+    "reprogramacion": "Cada sesión puede reprogramarse una vez sin costo avisando con 24 horas de anticipación.",
+    "garantia": "Si el informe entregado no responde a los objetivos acordados en la propuesta, se corrige sin costo dentro de los 30 días siguientes a la entrega."
   },
+
   "faqs": [
     {
-      "pregunta": "¿Cuánto tarda un proyecto?",
-      "respuesta": "Entre 2 y 8 semanas según la complejidad."
+      "pregunta": "¿Qué tipos de consultoría ofrecen?",
+      "respuesta": "Trabajamos cinco líneas: diagnóstico digital, optimización de procesos, adopción de herramientas digitales, automatización de la atención al cliente y formación de equipos. Escríbenos *!servicios* para ver el detalle de cada una."
     },
     {
-      "pregunta": "¿Ofrecen soporte post-venta?",
-      "respuesta": "Sí, 3 meses de soporte gratuito incluido."
+      "pregunta": "¿Cuánto cuesta una consultoría?",
+      "respuesta": "El diagnóstico digital parte de COP 890.000 y los proyectos de consultoría van desde COP 2.400.000, según el alcance. Siempre enviamos una propuesta con el precio cerrado antes de empezar; no cobramos por cotizar."
     },
     {
-      "pregunta": "¿Tienen sede física?",
-      "respuesta": "Sí, en Bogotá. También atendemos de forma virtual en todo el país."
+      "pregunta": "¿Cuánto tardan en entregar?",
+      "respuesta": "El diagnóstico digital toma entre 5 y 8 días hábiles. Los proyectos de procesos y adopción tardan entre 3 y 8 semanas según el alcance. La fecha de entrega queda por escrito en la propuesta."
+    },
+    {
+      "pregunta": "¿Cómo protegen la información de mi empresa?",
+      "respuesta": "Firmamos un acuerdo de confidencialidad antes de iniciar. No compartimos datos, cifras ni nombres de clientes con terceros y los entregables quedan como propiedad exclusiva de tu empresa."
+    },
+    {
+      "pregunta": "¿Cómo son las formas de pago?",
+      "respuesta": "Se paga el 50 % al firmar la propuesta y el 50 % contra la entrega del informe final, por transferencia, PSE o tarjeta. Los precios se expresan en pesos colombianos y no incluyen IVA."
+    },
+    {
+      "pregunta": "¿Puedo cancelar o reprogramar una sesión?",
+      "respuesta": "Sí. La cancelación es sin costo hasta 48 horas antes; con menos tiempo se retiene el 20 % del anticipo. Además, cada sesión puede reprogramarse una vez sin costo avisando con 24 horas de anticipación."
+    },
+    {
+      "pregunta": "¿Atienden de forma virtual o presencial?",
+      "respuesta": "Ambas. Atendemos presencialmente en Cali y de forma virtual en todo el país. La mayoría de proyectos combina sesiones virtuales con dos o tres visitas presenciales."
+    },
+    {
+      "pregunta": "¿Trabajan con empresas pequeñas?",
+      "respuesta": "Sí, es nuestro foco. La mayoría de nuestros clientes son Mipymes de comercio y servicios de entre 3 y 30 empleados en Cali y el Valle del Cauca."
     }
   ],
+
   "respuesta_fuera_horario": true,
-  "mensaje_fuera_horario": "Gracias por escribirnos 🙏 En este momento estamos fuera de horario de atención. Tu mensaje es importante para nosotros y te responderemos lo antes posible durante nuestro horario hábil."
+  "mensaje_fuera_horario": "Gracias por escribir a Vértice Consultoría Digital 🙏 En este momento estamos fuera del horario de atención. Tu mensaje queda registrado y un consultor te responderá al inicio de la siguiente jornada hábil.",
+
+  "identidad": {
+    "razon_social": "Vértice Consultoría Digital S.A.S.",
+    "nombre_comercial": "Vértice Consultoría",
+    "nit": "901.487.302-6",
+    "tipo_societario": "Sociedad por Acciones Simplificada (S.A.S.)",
+    "fundacion": "2021",
+    "ciudad": "Santiago de Cali, Valle del Cauca, Colombia",
+    "tamano": "Microempresa (7 personas)",
+    "historia": "Vértice nació en 2021, cuando dos consultores caleños que trabajaban con grandes empresas notaron que las Mipymes de la ciudad recibían siempre la misma respuesta: metodologías pesadas, costosas y pensadas para compañías con departamentos enteros de tecnología. Empezaron atendiendo a tres comercios del barrio Granada desde una oficina compartida, con una idea simple: entregar diagnósticos cortos y accionables en lugar de informes de doscientas páginas. Ese enfoque hizo que la firma creciera por recomendación y hoy acompaña a más de noventa empresas del Valle del Cauca.",
+    "mision": "Acercar la tecnología a las Mipymes del Valle del Cauca con soluciones que puedan implementar de verdad: cortas, medibles y adaptadas a cómo trabajan hoy.",
+    "vision": "Ser en 2030 la firma de referencia en transformación digital para Mipymes del suroccidente colombiano, reconocida por entregar resultados verificables y no diagnósticos de escritorio.",
+    "valores": [
+      "Claridad: hablamos sin tecnicismos y explicamos cada recomendación en términos del negocio.",
+      "Honestidad técnica: si un proyecto no conviene al cliente, lo decimos antes de venderlo.",
+      "Confidencialidad: la información del cliente no sale de la firma.",
+      "Cercanía: acompañamos la implementación, no solo la entrega del informe.",
+      "Medición: toda recomendación viene con un indicador que permita saber si funcionó."
+    ],
+    "cultura": "Equipo pequeño y horizontal, con trabajo híbrido y reuniones cortas. Cada consultor lleva sus propios clientes de principio a fin y presenta sus aprendizajes en una sesión interna quincenal. Se privilegia el criterio propio sobre el procedimiento: un consultor puede replantear una propuesta si detecta que no le sirve al cliente."
+  },
+
+  "catalogo": [
+    {
+      "servicio": "Diagnóstico digital empresarial",
+      "descripcion": "Revisión del estado digital del negocio: procesos, herramientas, canales de atención y datos. Entrega un informe con hallazgos priorizados y una hoja de ruta a seis meses.",
+      "modalidad": "Virtual o presencial en Cali",
+      "duracion": "5 a 8 días hábiles",
+      "precio_desde_cop": 890000,
+      "entregable": "Informe de diagnóstico y hoja de ruta priorizada"
+    },
+    {
+      "servicio": "Consultoría en optimización de procesos",
+      "descripcion": "Levantamiento y rediseño de los procesos críticos del negocio para reducir reprocesos y tiempos muertos, con indicadores de seguimiento.",
+      "modalidad": "Híbrida",
+      "duracion": "4 a 8 semanas",
+      "precio_desde_cop": 3200000,
+      "entregable": "Mapa de procesos rediseñado, manual e indicadores"
+    },
+    {
+      "servicio": "Acompañamiento en adopción de herramientas digitales",
+      "descripcion": "Selección e implementación de herramientas de gestión, facturación o CRM adecuadas al tamaño real de la empresa, con acompañamiento durante la puesta en marcha.",
+      "modalidad": "Híbrida",
+      "duracion": "3 a 6 semanas",
+      "precio_desde_cop": 2400000,
+      "entregable": "Herramienta configurada, datos migrados y equipo capacitado"
+    },
+    {
+      "servicio": "Automatización de atención al cliente",
+      "descripcion": "Diseño e implementación de la atención automatizada en los canales digitales del negocio, con foco en WhatsApp: respuestas frecuentes, cobertura fuera de horario y escalamiento a una persona cuando hace falta.",
+      "modalidad": "Virtual",
+      "duracion": "2 a 4 semanas",
+      "precio_desde_cop": 1750000,
+      "entregable": "Canal automatizado en operación y protocolo de escalamiento"
+    },
+    {
+      "servicio": "Formación y transferencia de conocimiento",
+      "descripcion": "Talleres prácticos para que el equipo del cliente sostenga los cambios sin depender de la firma: uso de herramientas, lectura de indicadores y mejora continua.",
+      "modalidad": "Presencial en Cali o virtual",
+      "duracion": "Sesiones de 4 horas, de 1 a 4 sesiones",
+      "precio_desde_cop": 640000,
+      "entregable": "Taller dictado, material de apoyo y guía de consulta"
+    }
+  ],
+
+  "clientes_objetivo": {
+    "segmento_primario": "Mipymes de comercio y servicios de Santiago de Cali con 3 a 30 empleados, facturación anual entre COP 150 y 2.000 millones, que ya usan WhatsApp para atender pero lo hacen de forma manual.",
+    "segmentos_secundarios": [
+      "Consultorios y centros de estética con agenda por WhatsApp",
+      "Comercios minoristas con catálogo y pedidos por mensajería",
+      "Empresas de servicios profesionales del Valle del Cauca"
+    ],
+    "dolores_frecuentes": [
+      "Pierden ventas por no responder fuera del horario comercial",
+      "El dueño atiende personalmente el WhatsApp y eso le consume el día",
+      "La información del negocio está dispersa entre cuadernos, Excel y la memoria del equipo",
+      "Han comprado herramientas que nadie usa por falta de acompañamiento"
+    ],
+    "no_atendemos": "Proyectos de desarrollo de software a la medida, infraestructura de redes y soporte técnico de equipos. En esos casos remitimos a aliados."
+  },
+
+  "canales_atencion": [
+    { "canal": "WhatsApp Business", "detalle": "Canal principal de primer contacto, atendido por el asistente virtual con escalamiento a un consultor.", "horario": "Automático 24/7; consultores en horario hábil" },
+    { "canal": "Correo electrónico", "detalle": "contacto@verticeconsultoria.co para propuestas formales y facturación.", "horario": "Respuesta en horario hábil" },
+    { "canal": "Teléfono fijo", "detalle": "+57 602 485 7130, conmutador de la oficina de Granada.", "horario": "Lunes a viernes de 8:00 a. m. a 6:00 p. m." },
+    { "canal": "Oficina", "detalle": "Avenida 6N #23-45, oficina 502, Cali. Atención con cita previa.", "horario": "Lunes a viernes de 9:00 a. m. a 5:00 p. m." }
+  ],
+
+  "organizacion": {
+    "nota": "Información interna. El asistente no debe revelarla a los clientes.",
+    "organigrama": "Dirección General → (Dirección de Consultoría, Dirección de Tecnología, Administración y Finanzas). La Dirección de Consultoría coordina los tres puestos de atención al cliente.",
+    "departamentos": [
+      {
+        "nombre": "Dirección General",
+        "responsable": "Gerente general",
+        "funciones": ["Estrategia de la firma", "Relación con clientes clave", "Aprobación de propuestas sobre COP 10 millones"],
+        "personas": 1
+      },
+      {
+        "nombre": "Consultoría",
+        "responsable": "Director de consultoría",
+        "funciones": ["Diagnósticos y proyectos", "Atención de los tres puestos de servicio al cliente", "Elaboración de propuestas"],
+        "personas": 3
+      },
+      {
+        "nombre": "Tecnología",
+        "responsable": "Director de tecnología",
+        "funciones": ["Implementación de herramientas", "Automatización de canales digitales", "Soporte a los proyectos de adopción"],
+        "personas": 2
+      },
+      {
+        "nombre": "Administración y Finanzas",
+        "responsable": "Analista administrativa",
+        "funciones": ["Facturación y cartera", "Agenda y contratos", "Cumplimiento tributario"],
+        "personas": 1
+      }
+    ],
+    "cargos": [
+      { "cargo": "Gerente general", "area": "Dirección General", "funciones": "Dirigir la firma, cerrar cuentas clave y aprobar propuestas de alto valor." },
+      { "cargo": "Director de consultoría", "area": "Consultoría", "funciones": "Diseñar la metodología, asignar consultores y garantizar la calidad de los entregables." },
+      { "cargo": "Consultor senior", "area": "Consultoría", "funciones": "Liderar diagnósticos y proyectos de procesos de principio a fin." },
+      { "cargo": "Consultor junior", "area": "Consultoría", "funciones": "Levantar información, documentar procesos y apoyar los talleres de formación." },
+      { "cargo": "Director de tecnología", "area": "Tecnología", "funciones": "Definir la arquitectura de las soluciones y responder por las implementaciones." },
+      { "cargo": "Implementador", "area": "Tecnología", "funciones": "Configurar herramientas, migrar datos y automatizar canales de atención." },
+      { "cargo": "Analista administrativa", "area": "Administración y Finanzas", "funciones": "Facturar, gestionar cartera, contratos y agenda de la firma." }
+    ]
+  },
+
+  "procesos": [
+    { "proceso": "Primer contacto", "descripcion": "El asistente virtual atiende el mensaje entrante, resuelve dudas de servicios, precios, tiempos y políticas, y clasifica la intención.", "responsable": "Asistente virtual", "sla": "Respuesta inmediata" },
+    { "proceso": "Escalamiento a consultor", "descripcion": "Cuando la consulta requiere criterio profesional o cotización a la medida, el caso pasa a un puesto de atención con el historial de la conversación.", "responsable": "Consultoría", "sla": "4 horas hábiles" },
+    { "proceso": "Diagnóstico y propuesta", "descripcion": "Sesión de entendimiento, elaboración de la propuesta con alcance, precio cerrado y fecha de entrega.", "responsable": "Consultor senior", "sla": "3 días hábiles" },
+    { "proceso": "Ejecución del proyecto", "descripcion": "Desarrollo del proyecto con reuniones de avance semanales y un único consultor responsable de la cuenta.", "responsable": "Consultoría", "sla": "Según propuesta" },
+    { "proceso": "Cierre y seguimiento", "descripcion": "Entrega del informe, sesión de transferencia y contacto de seguimiento a los 30 días para medir los indicadores acordados.", "responsable": "Dirección de consultoría", "sla": "30 días tras la entrega" }
+  ],
+
+  "estrategia": {
+    "nota": "Información interna. El asistente no debe revelarla a los clientes.",
+    "objetivos": [
+      "Sostener una satisfacción del cliente igual o superior a 4,5 sobre 5,0 en los proyectos cerrados",
+      "Elevar al 70 % la proporción de primeros contactos resueltos sin intervención humana",
+      "Cerrar el año con 120 empresas acompañadas en el Valle del Cauca",
+      "Mantener por debajo de 4 horas hábiles el tiempo de escalamiento a un consultor"
+    ],
+    "indicadores": [
+      { "indicador": "Conversaciones atendidas por mes", "meta": "180 a 250" },
+      { "indicador": "Resolución en el primer contacto", "meta": "≥ 70 %" },
+      { "indicador": "Tiempo de primera respuesta", "meta": "≤ 5 segundos en canal automatizado" },
+      { "indicador": "Satisfacción del cliente", "meta": "≥ 4,5 / 5,0" },
+      { "indicador": "Propuestas cerradas sobre propuestas enviadas", "meta": "≥ 35 %" }
+    ],
+    "crecimiento_esperado": "Pasar de 7 a 11 personas en dos años, abrir una línea de acompañamiento por suscripción mensual y extender la operación a Palmira y Yumbo manteniendo la oficina de Cali como sede única.",
+    "ventajas_competitivas": [
+      "Entregables cortos y accionables frente a los informes extensos de las firmas tradicionales",
+      "Precio cerrado desde la propuesta, sin cobro por hora ni sobrecostos",
+      "Conocimiento del tejido empresarial caleño y presencia local",
+      "Acompañamiento durante la implementación, no solo la entrega del informe",
+      "Un único consultor responsable por cuenta de principio a fin"
+    ]
+  },
+
+  "divulgacion": {
+    "publico": [
+      "Servicios, modalidades, duraciones y precios desde",
+      "Políticas de pago, cancelación, reprogramación, confidencialidad y garantía",
+      "Horario, dirección, teléfono y correo",
+      "Historia, misión, visión y valores",
+      "Preguntas frecuentes"
+    ],
+    "interno": [
+      "Organigrama, departamentos, cargos y número de personas",
+      "Procesos internos y acuerdos de nivel de servicio",
+      "Objetivos estratégicos, indicadores y metas",
+      "Planes de crecimiento y ventajas competitivas"
+    ],
+    "instruccion_asistente": "No reveles la estructura interna, los procesos, los indicadores ni los planes de crecimiento de la firma. Si preguntan por ellos, ofrece comunicar con un consultor."
+  }
 }

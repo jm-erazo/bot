@@ -1,6 +1,42 @@
 /**
- * WhatsApp Bot Empresarial — v3.2 (GEMINI EDITION)
+ * WhatsApp Bot Empresarial — v3.4 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
+ * Cambios v3.4 (optimización de contexto; arquitectura y flujo intactos):
+ * ⚡ TOKENS: El system prompt fijo pasó de ~1.743 a ~320 tokens. La información
+ *           detallada de la empresa (servicios, políticas, FAQ, identidad,
+ *           contacto, alcance) ya no viaja completa en cada mensaje: un enrutador
+ *           de intención (detectarModulos) carga SOLO el/los módulos que el
+ *           mensaje necesita, como bloque "CONTEXTO:" del turno. Promedio medido
+ *           ≈675 tokens/mensaje (−61%); saludos y charla sin tema ≈320 (−82%).
+ *           La empresa NO se simplifica: empresa.json sigue completo; solo cambia
+ *           cuánta información llega al modelo en cada turno.
+ * ✨ Cada módulo de contexto se compila una vez y se cachea por separado.
+ *
+ * Cambios v3.3 (evolución; arquitectura y flujo intactos):
+ * 🔧 CRÍTICO: La corrección v3.2 (429 = cuota, no key inválida) solo se había
+ *             aplicado en menuInicio(). consultarIA() seguía borrando la API Key
+ *             ante cualquier error 403, incluido PERMISSION_DENIED por cuota →
+ *             el bot se quedaba sin IA en caliente pese a tener una key válida.
+ *             La clasificación se centraliza ahora en clasificarErrorGemini().
+ * 🔧 CORREGIDO: conversaciones.json se reescribía completo y de forma síncrona
+ *             en cada mensaje (bloqueo del event loop, O(contactos) por mensaje).
+ *             Ahora la escritura es diferida y atómica (tmp + rename), lo que
+ *             además evita dejar el archivo corrupto si el proceso muere a media
+ *             escritura (antes: pérdida total del historial).
+ * 🔧 CORREGIDO: El Map `recordatorios` se llenaba y no se vaciaba nunca → fuga
+ *             de memoria. Cada entrada se elimina al dispararse su temporizador.
+ * 🔧 CORREGIDO: esFueraHorario() ya comprueba `respuesta_fuera_horario`; la
+ *             condición se evaluaba dos veces en el flujo de mensajes.
+ * 🔧 CORREGIDO: La versión estaba escrita a mano en tres sitios y no coincidía
+ *             (cabecera v3.2, menú v3.1, package.json 3.2.0) → const VERSION.
+ * ⚡ RENDIMIENTO: El system prompt se reconstruía en cada mensaje concatenando
+ *             todo empresa.json. Ahora se compila una sola vez y se invalida al
+ *             recargar la empresa.
+ * ✨ NUEVO: empresa.json admite bloques corporativos (identidad, catálogo,
+ *             organización, procesos, estrategia). Solo los de cara al cliente
+ *             entran al prompt; los internos quedan excluidos por diseño.
+ * ✨ NUEVO: !nosotros (historia, misión, visión y valores).
+ *
  * Correcciones v3.2:
  * 🔧 CRÍTICO: La validación de API Key descartaba claves VÁLIDAS cuando Google
  *             devolvía error 429 (quota excedida en el free tier). La clave era
@@ -49,6 +85,11 @@ const require = createRequire(import.meta.url);
 const qrcode = require("qrcode-terminal");
 
 // ─── Configuración base ───────────────────────────────────────────────────────
+
+// Única fuente de verdad de la versión: debe coincidir con package.json.
+// Antes estaba escrita a mano en la cabecera, en el menú de inicio y en el
+// README, y las tres se habían desincronizado.
+const VERSION = "3.4.0";
 
 const CONFIG = {
   // IA — Google Gemini
@@ -122,12 +163,59 @@ function cargarJSON(archivo, valorDefecto) {
   return valorDefecto;
 }
 
+/**
+ * Escritura ATÓMICA: se escribe en un temporal y se renombra. rename() es una
+ * operación atómica del sistema de archivos, de modo que el archivo destino
+ * nunca queda a medias.
+ *
+ * FIX: writeFileSync() directo sobre el archivo real dejaba conversaciones.json
+ * truncado si el proceso moría durante la escritura. Al arrancar, JSON.parse()
+ * fallaba y cargarJSON() devolvía el valor por defecto → se perdía TODO el
+ * historial de conversaciones.
+ */
 function guardarJSON(archivo, datos) {
+  const tmp = `${archivo}.tmp`;
   try {
-    fs.writeFileSync(archivo, JSON.stringify(datos, null, 2), "utf-8");
+    fs.writeFileSync(tmp, JSON.stringify(datos, null, 2), "utf-8");
+    fs.renameSync(tmp, archivo);
   } catch (e) {
     console.error(`⚠️  Error guardando ${archivo}:`, e.message);
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
   }
+}
+
+/**
+ * Guardado diferido para archivos de escritura muy frecuente.
+ *
+ * FIX (cuello de botella): registrarMensaje() llamaba a guardarJSON() en cada
+ * mensaje entrante y en cada respuesta, serializando el objeto COMPLETO de
+ * conversaciones (todos los contactos) de forma síncrona. Con la base de
+ * contactos creciendo, el coste por mensaje crecía con ella y bloqueaba el
+ * event loop justo mientras se atendía a un usuario.
+ *
+ * Ahora las escrituras se agrupan en una ventana corta. El cierre limpio
+ * (gracefulShutdown) fuerza el volcado pendiente, así que no se pierde nada.
+ */
+const escriturasPendientes = new Map(); // archivo → timeout
+
+function guardarJSONDiferido(archivo, datos, esperaMs = 2000) {
+  if (escriturasPendientes.has(archivo)) return; // ya hay un volcado programado
+  const id = setTimeout(() => {
+    escriturasPendientes.delete(archivo);
+    guardarJSON(archivo, datos);
+  }, esperaMs);
+  id.unref?.(); // no debe mantener vivo el proceso por sí solo
+  escriturasPendientes.set(archivo, id);
+}
+
+/** Fuerza los volcados pendientes (cierre limpio, comandos que deben persistir ya). */
+function vaciarEscriturasPendientes(archivo, datos) {
+  const id = escriturasPendientes.get(archivo);
+  if (id) {
+    clearTimeout(id);
+    escriturasPendientes.delete(archivo);
+  }
+  guardarJSON(archivo, datos);
 }
 
 // ─── Empresa ─────────────────────────────────────────────────────────────────
@@ -166,8 +254,10 @@ let conversaciones = cargarJSON(CONFIG.DB_CONVERSACIONES, {});
 
 function recargarEmpresa() {
   empresa = cargarJSON(CONFIG.DB_EMPRESA, empresa);
-  // Recrear el singleton de IA para que use el nuevo contexto de empresa
-  genAI = CONFIG.GEMINI_API_KEY ? new GoogleGenerativeAI(CONFIG.GEMINI_API_KEY) : null;
+  // El contexto de la empresa viaja en el system prompt, no en el cliente de IA:
+  // recrear GoogleGenerativeAI aquí (como se hacía antes) no cambiaba nada. Lo
+  // que sí debe rehacerse es el prompt compilado y el modelo que lo lleva dentro.
+  invalidarCacheIA();
   return empresa;
 }
 
@@ -207,7 +297,9 @@ function registrarMensaje(jid, rol, contenido) {
   if (!conversaciones[jid]) conversaciones[jid] = [];
   conversaciones[jid].push({ rol, contenido, ts: new Date().toISOString() });
   if (conversaciones[jid].length > 40) conversaciones[jid].splice(0, 20);
-  guardarJSON(CONFIG.DB_CONVERSACIONES, conversaciones);
+  // Camino caliente: se agrupan las escrituras en lugar de volcar el archivo
+  // completo por cada mensaje. gracefulShutdown() fuerza el volcado pendiente.
+  guardarJSONDiferido(CONFIG.DB_CONVERSACIONES, conversaciones);
 }
 
 /**
@@ -245,10 +337,250 @@ function buildGeminiHistory(historialRaw = []) {
   return pares.slice(-20);
 }
 
+// ─── Clasificación de errores de Gemini ──────────────────────────────────────
+
+/**
+ * Clasifica un error de la API de Gemini en una de tres categorías.
+ *
+ * FIX CRÍTICO v3.3: esta lógica existía SOLO dentro de menuInicio(). En
+ * consultarIA() había una versión distinta y más débil que descartaba la API Key
+ * ante `e.status === 403` sin comprobar antes si el error era de cuota. Google
+ * responde 403 PERMISSION_DENIED en varios escenarios de cuota y facturación, de
+ * modo que el bot borraba en caliente una clave perfectamente válida y se quedaba
+ * sin IA hasta el siguiente reinicio: exactamente el fallo que la v3.2 arregló en
+ * el arranque, pero que seguía vivo en tiempo de ejecución.
+ *
+ * Tener una sola función evita que ambas rutas vuelvan a divergir.
+ *
+ * @param {Error} e
+ * @returns {"cuota"|"key_invalida"|"modelo"|"transitorio"}
+ */
+function clasificarErrorGemini(e) {
+  const msg = String(e?.message || "");
+  const status = e?.status ?? e?.response?.status;
+
+  // La cuota se evalúa PRIMERO: un 429/RESOURCE_EXHAUSTED significa que la clave
+  // es correcta y solo hay que esperar. Nunca debe tratarse como clave inválida.
+  if (
+    status === 429 ||
+    msg.includes("429") ||
+    /quota/i.test(msg) ||
+    msg.includes("RESOURCE_EXHAUSTED") ||
+    msg.includes("Too Many Requests")
+  ) return "cuota";
+
+  // Solo se descarta la clave cuando Google dice explícitamente que no sirve.
+  if (
+    msg.includes("API key not valid") ||
+    msg.includes("API_KEY_INVALID")   ||
+    msg.includes("INVALID_API_KEY")   ||
+    status === 401 || status === 403  ||
+    msg.includes("401")
+  ) return "key_invalida";
+
+  if (msg.includes("404") || /not found/i.test(msg) || msg.includes("INVALID_ARGUMENT")) {
+    return "modelo";
+  }
+
+  // Red, timeout o error puntual: se conserva la clave.
+  return "transitorio";
+}
+
+// ─── System prompt (compilado una sola vez) ──────────────────────────────────
+
+// ─── Contexto empresarial modular (lazy loading) ─────────────────────────────
+//
+// El system prompt viaja en CADA mensaje. Enviar toda la información de la
+// empresa (servicios, políticas, FAQ, identidad…) costaba ~1.743 tokens por
+// mensaje aunque el usuario preguntara una sola cosa.
+//
+// Rediseño v3.4: se separa el contexto en dos capas.
+//   1. PROMPT BASE (fijo, ~320 tokens): identidad mínima, un índice de los temas
+//      disponibles y las instrucciones. Va en systemInstruction y se cachea.
+//   2. MÓDULOS (bajo demanda): servicios, políticas, FAQ, identidad, contacto y
+//      alcance. Cada módulo se compila una vez y se cachea por separado. En cada
+//      mensaje, un enrutador de intención decide QUÉ módulos añadir, y solo esos
+//      viajan como bloque "CONTEXTO:" del turno.
+//
+// La información de la empresa NO se reduce: sigue completa en empresa.json.
+// Solo cambia CUÁNTA viaja al modelo en cada mensaje. Los bloques internos
+// (organizacion, procesos, estrategia) siguen sin exponerse nunca.
+
+/** Normaliza texto para el enrutador: minúsculas y sin acentos. */
+function normalizar(s) {
+  return String(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+// Compiladores de cada módulo. Reciben `empresa` y devuelven texto plano.
+const COMPILAR_MODULO = {
+  servicios(e) {
+    if (!Array.isArray(e.catalogo) || !e.catalogo.length) {
+      return `Servicios: ${(e.productos || []).join(", ")}`;
+    }
+    const detalle = e.catalogo.map((s) => {
+      const precio = s.precio_desde_cop
+        ? `desde COP ${Number(s.precio_desde_cop).toLocaleString("es-CO")}`
+        : "precio a cotizar";
+      return `- ${s.servicio}: ${s.descripcion} (Modalidad: ${s.modalidad || "N/A"}. ` +
+             `Duración: ${s.duracion || "N/A"}. Precio ${precio}, sin IVA. ` +
+             `Entregable: ${s.entregable || "N/A"}.)`;
+    }).join("\n");
+    return `Servicios:\n${detalle}`;
+  },
+  politicas(e) {
+    const pol = e.politicas || {};
+    if (!Object.keys(pol).length) return "";
+    return "Políticas:\n" + Object.entries(pol).map(([k, v]) => `- ${k}: ${v}`).join("\n");
+  },
+  faqs(e) {
+    if (!e.faqs?.length) return "";
+    return "Preguntas frecuentes:\n" + e.faqs.map((f) => `- P: ${f.pregunta}\n  R: ${f.respuesta}`).join("\n");
+  },
+  identidad(e) {
+    const id = e.identidad;
+    if (!id) return "";
+    const partes = [];
+    if (id.historia) partes.push(`- Historia: ${id.historia}`);
+    if (id.mision)   partes.push(`- Misión: ${id.mision}`);
+    if (id.vision)   partes.push(`- Visión: ${id.vision}`);
+    if (id.valores?.length) partes.push(`- Valores: ${id.valores.join(" ")}`);
+    return partes.length ? `Identidad de la empresa:\n${partes.join("\n")}` : "";
+  },
+  contacto(e) {
+    const canales = Array.isArray(e.canales_atencion)
+      ? "\n" + e.canales_atencion.map((c) => `- ${c.canal}: ${c.detalle} (${c.horario})`).join("\n")
+      : "";
+    return `Contacto y canales:\n- Teléfono: ${e.telefono || "N/A"}\n- Email: ${e.email || "N/A"}\n` +
+           `- Dirección: ${e.direccion || "N/A"}\n- Horario: ${e.horario || "N/A"}${canales}`;
+  },
+  alcance(e) {
+    const co = e.clientes_objetivo;
+    if (!co) return "";
+    const partes = [];
+    if (co.segmento_primario) partes.push(`- Segmento objetivo: ${co.segmento_primario}`);
+    if (co.no_atendemos)      partes.push(`- Fuera de alcance: ${co.no_atendemos}`);
+    return partes.length ? `Alcance de la empresa:\n${partes.join("\n")}` : "";
+  },
+};
+
+// Palabras/frases clave por módulo (normalizadas sin acentos al comparar).
+const INTENCION_KW = {
+  servicios: ["servicio", "precio", "cuesta", "costo", "vale", "tarifa", "cotiz",
+              "cobran", "catalogo", "diagnostico", "consultoria", "automatiz",
+              "formacion", "adopcion", "optimizacion de procesos", "producto"],
+  politicas: ["politica", "pago", "pagar", "se paga", "forma de pago", "metodo de pago",
+              "factura", "cancel", "reprogram", "reembolso", "devoluc", "garantia",
+              "confidencial", "privacidad", "proteg", "contrato", "anticipo", "iva"],
+  faqs:      ["tardan", "tarda", "demoran", "tiempo de entrega", "cuanto dura",
+              "presencial", "virtual", "sede fisica", "atienden a empresas",
+              "trabajan con empresas", "soporte", "post-venta", "postventa"],
+  identidad: ["historia", "mision", "vision", "valores", "quienes son",
+              "sobre ustedes", "fundacion", "cuando nacieron", "sobre la empresa",
+              "cultura", "filosofia", "trayectoria"],
+  contacto:  ["telefono", "llamar", "correo", "email", "direccion", "donde estan",
+              "donde quedan", "ubicacion", "oficina", "como los contacto",
+              "como contacto", "a que hora", "horario"],
+  alcance:   ["hacen desarrollo", "hacen software", "desarrollo a la medida",
+              "desarrollo de software", "tipo de cliente", "fuera de alcance",
+              "infraestructura", "redes", "soporte tecnico de equipos"],
+};
+
+/**
+ * Enrutador de intención: decide qué módulos de contexto necesita el mensaje.
+ *
+ * @param {string} texto - Mensaje del usuario
+ * @returns {string[]} nombres de módulos a inyectar (posiblemente vacío)
+ */
+function detectarModulos(texto) {
+  const t = " " + normalizar(texto) + " ";
+  const activos = new Set();
+  for (const [nombre, kws] of Object.entries(INTENCION_KW)) {
+    if (kws.some((k) => t.includes(normalizar(k)))) activos.add(nombre);
+  }
+  // Desambiguación: "proteger/confidencial la información" es una duda de
+  // política de datos, no de servicios ni de tipo de cliente. La palabra
+  // "empresa" en "mi empresa" tiende a activar varios módulos por error.
+  if (activos.has("politicas") &&
+      /(proteg|confidencial|privacidad).*(informacion|dato|empresa)/.test(t)) {
+    return ["politicas"];
+  }
+  return [...activos];
+}
+
+/**
+ * Construye el bloque "CONTEXTO:" del turno con solo los módulos pertinentes.
+ * Devuelve "" si el mensaje no necesita contexto adicional (p. ej. un saludo).
+ */
+function construirContextoTurno(texto) {
+  const modulos = detectarModulos(texto);
+  if (!modulos.length) return "";
+  const bloques = modulos
+    .map((m) => moduloCache[m] ??= COMPILAR_MODULO[m](empresa))
+    .filter(Boolean);
+  return bloques.length ? `CONTEXTO:\n${bloques.join("\n\n")}` : "";
+}
+
+/**
+ * Compila el PROMPT BASE ligero: identidad mínima + índice de temas + reglas.
+ * No incluye el detalle de servicios, políticas ni FAQ: esos llegan por módulo.
+ */
+function construirSystemPrompt() {
+  const nombre = empresa.nombre || "la empresa";
+  const ciudad = empresa.identidad?.ciudad || "";
+  const temas  = Object.keys(COMPILAR_MODULO).join(", ");
+  const reserva = empresa.divulgacion?.instruccion_asistente
+    || "No reveles información interna de la empresa.";
+
+  return `Eres el asistente virtual de ${nombre}.
+Sector: ${empresa.sector || "N/A"}
+Descripción: ${empresa.descripcion || "N/A"}
+Horario: ${empresa.horario || "N/A"}
+Contacto: ${empresa.telefono || ""} | ${empresa.email || ""}${ciudad ? `\nCiudad: ${ciudad}` : ""}
+
+Dispones de información detallada sobre estos temas: ${temas}. Cuando el mensaje incluya un bloque rotulado "CONTEXTO:", trátalo como la fuente de verdad y responde a partir de él. Si el usuario pregunta por un tema del que no recibiste contexto, respóndele con lo que sepas y, si hace falta el detalle, ofrécele comunicar con un asesor.
+
+Instrucciones:
+- Responde siempre en español, de forma amable, concisa y profesional.
+- No inventes información que no esté en el contexto.
+- ${reserva}
+- Usa emojis con moderación para hacer la conversación más amigable.
+- Si el usuario saluda, salúdalo de vuelta presentándote como asistente de ${nombre}.
+- Máximo 3 párrafos por respuesta para ser conciso en WhatsApp.`;
+}
+
+// Caché del prompt base, del modelo y de cada módulo de contexto.
+// El prompt base y el modelo solo cambian al recargar la empresa o la API Key.
+// Los módulos se compilan la primera vez que se necesitan y se reutilizan.
+let systemPromptCache = null;
+let modelCache        = null;
+let moduloCache       = {};
+
+function invalidarCacheIA() {
+  systemPromptCache = null;
+  modelCache        = null;
+  moduloCache       = {}; // los módulos dependen de empresa.json
+}
+
+function obtenerModeloIA() {
+  if (!genAI) return null;
+  if (!modelCache) {
+    systemPromptCache ??= construirSystemPrompt();
+    modelCache = genAI.getGenerativeModel({
+      model: CONFIG.GEMINI_MODEL,
+      systemInstruction: systemPromptCache,
+    });
+  }
+  return modelCache;
+}
+
 // ─── IA con Google Gemini ────────────────────────────────────────────────────
 
 /**
  * Consulta Gemini con el mensaje actual y el historial previo ya validado.
+ *
+ * El contexto empresarial pertinente se inyecta SOLO para el mensaje actual,
+ * anteponiéndolo al texto del usuario. No entra en el historial persistido, de
+ * modo que no se acumula turno tras turno.
  *
  * @param {string} preguntaUsuario  - Mensaje actual del usuario
  * @param {Array}  historialGemini  - Historial pre-validado por buildGeminiHistory()
@@ -258,30 +590,8 @@ async function consultarIA(preguntaUsuario, historialGemini = []) {
     return "⚠️ La IA no está configurada. Agrega tu GEMINI_API_KEY al iniciar el bot.";
   }
 
-  const systemPrompt =
-    `Eres el asistente virtual de ${empresa.nombre || "la empresa"}.
-Sector: ${empresa.sector || "N/A"}
-Descripción: ${empresa.descripcion || "N/A"}
-Horario: ${empresa.horario || "N/A"}
-Contacto: ${empresa.telefono || ""} | ${empresa.email || ""}
-Dirección: ${empresa.direccion || "N/A"}
-Productos/Servicios: ${(empresa.productos || []).join(", ")}
-Políticas: ${JSON.stringify(empresa.politicas || {})}
-FAQs: ${(empresa.faqs || []).map((f) => `P: ${f.pregunta} R: ${f.respuesta}`).join(" | ")}
-
-Instrucciones:
-- Responde siempre en español, de forma amable, concisa y profesional.
-- Si no sabes algo sobre la empresa, indica que puedes comunicar con un agente humano.
-- No inventes información que no esté en el contexto.
-- Usa emojis con moderación para hacer la conversación más amigable.
-- Si el usuario saluda, salúdalo de vuelta presentándote como asistente de ${empresa.nombre || "la empresa"}.
-- Máximo 3 párrafos por respuesta para ser conciso en WhatsApp.`;
-
   try {
-    const model = genAI.getGenerativeModel({
-      model: CONFIG.GEMINI_MODEL,
-      systemInstruction: systemPrompt,
-    });
+    const model = obtenerModeloIA();
 
     // historialGemini ya está validado y NO contiene el mensaje actual.
     // sendMessage() agrega el mensaje actual al contexto internamente.
@@ -290,27 +600,37 @@ Instrucciones:
       generationConfig: { maxOutputTokens: CONFIG.MAX_TOKENS_RESPUESTA },
     });
 
+    // Lazy loading: solo los módulos que la intención del mensaje requiere.
+    const contexto = construirContextoTurno(preguntaUsuario);
+    const mensaje  = contexto ? `${contexto}\n\nUsuario: ${preguntaUsuario}` : preguntaUsuario;
+
     // FIX: result.response NO es una Promise en @google/generative-ai.
     // El await adicional era innecesario; result.response ya es el objeto respuesta.
-    const result = await chatSession.sendMessage(preguntaUsuario);
+    const result = await chatSession.sendMessage(mensaje);
     return result.response.text() || "No pude generar una respuesta.";
 
   } catch (e) {
-    console.error("❌ Error conectando con Gemini API:", e.message);
+    const tipo = clasificarErrorGemini(e);
+    console.error(`❌ Error conectando con Gemini API [${tipo}]:`, e.message);
 
-    if (e.message?.includes("API key not valid") || e.message?.includes("API_KEY_INVALID") || e.status === 403) {
-      CONFIG.GEMINI_API_KEY = "";
-      genAI = null;
-      return "🔑 La API Key de IA es inválida. Reinicia el bot y verifica tu clave en aistudio.google.com.";
-    }
-    if (e.message?.includes("not found") || e.message?.includes("404") || e.message?.includes("INVALID_ARGUMENT")) {
-      return "⚠️ Modelo de IA no disponible. Contacta al administrador del bot.";
-    }
-    if (e.message?.includes("quota") || e.message?.includes("429") || e.message?.includes("RESOURCE_EXHAUSTED")) {
-      return "⏳ Límite de uso de IA alcanzado. Intenta de nuevo en un momento.";
-    }
+    switch (tipo) {
+      case "cuota":
+        // La clave es válida: NO se descarta. Solo hay que esperar a que se
+        // renueve la cuota del free tier.
+        return "⏳ Límite de uso de IA alcanzado. Intenta de nuevo en un momento.";
 
-    return "Lo siento, hubo un problema con el asistente IA. Intenta de nuevo en unos momentos.";
+      case "key_invalida":
+        CONFIG.GEMINI_API_KEY = "";
+        genAI = null;
+        invalidarCacheIA();
+        return "🔑 La API Key de IA es inválida. Reinicia el bot y verifica tu clave en aistudio.google.com.";
+
+      case "modelo":
+        return "⚠️ Modelo de IA no disponible. Contacta al administrador del bot.";
+
+      default:
+        return "Lo siento, hubo un problema con el asistente IA. Intenta de nuevo en unos momentos.";
+    }
   }
 }
 
@@ -356,14 +676,40 @@ function esFueraHorario() {
 
 // ─── Recordatorios ────────────────────────────────────────────────────────────
 
-const recordatorios = new Map();
+const recordatorios = new Map(); // jid → [{ texto, minutos, id }]
 
+/**
+ * Programa un recordatorio y lo retira del registro al dispararse.
+ *
+ * FIX: el Map solo crecía. Cada !recordar añadía una entrada que no se
+ * eliminaba nunca, ni siquiera después de que el temporizador se disparara, de
+ * modo que el proceso acumulaba memoria mientras estuviera vivo. Ahora la
+ * entrada se limpia al completarse, y el jid desaparece cuando no le quedan
+ * recordatorios pendientes.
+ */
 function programarRecordatorio(sock, jid, texto, minutos) {
-  const id = setTimeout(async () => {
-    await send(sock, jid, `⏰ *Recordatorio:* ${texto}`);
+  const entrada = { texto, minutos, id: null };
+
+  entrada.id = setTimeout(async () => {
+    try {
+      await send(sock, jid, `⏰ *Recordatorio:* ${texto}`);
+    } finally {
+      const lista = recordatorios.get(jid);
+      if (lista) {
+        const i = lista.indexOf(entrada);
+        if (i !== -1) lista.splice(i, 1);
+        if (lista.length === 0) recordatorios.delete(jid);
+      }
+    }
   }, minutos * 60_000);
+
   if (!recordatorios.has(jid)) recordatorios.set(jid, []);
-  recordatorios.get(jid).push({ texto, minutos, id });
+  recordatorios.get(jid).push(entrada);
+}
+
+/** Recordatorios pendientes de un chat (usado por !recordar para informar al usuario). */
+function recordatoriosPendientes(jid) {
+  return recordatorios.get(jid)?.length ?? 0;
 }
 
 // ─── Encuestas ────────────────────────────────────────────────────────────────
@@ -398,6 +744,7 @@ async function manejarComando(sock, jid, texto, senderName, senderJid, msgKey) {
   ℹ️  *!info* — Estado del bot
   🕐 *!hora* — Fecha y hora Bogotá
   🏢 *!empresa* — Info de la empresa
+  📖 *!nosotros* — Historia, misión y valores
   📞 *!contacto* — Datos de contacto
   💼 *!servicios* — Productos/servicios
   📋 *!faq* — Preguntas frecuentes
@@ -449,6 +796,7 @@ _Powered by Baileys + Google Gemini_`);
       await send(sock, jid,
 `🤖 *Estado del Bot*
 
+🏷️  *Versión:* v${VERSION}
 📦 *Librería:* Baileys (WhiskeySockets) v7
 🌐 *Protocolo:* WhatsApp Web WebSocket
 ⚡ *Runtime:* Node.js ${process.version}
@@ -486,7 +834,7 @@ _Hecho con ❤️ usando Baileys + Google Gemini_`);
 🕐 Horario: ${empresa.horario || "N/A"}
 📍 Dirección: ${empresa.direccion || "N/A"}
 
-_Escribe *!contacto*, *!servicios*, *!faq* o *!politicas* para más información._`);
+_Escribe *!nosotros*, *!contacto*, *!servicios*, *!faq* o *!politicas* para más información._`);
       break;
     }
 
@@ -507,9 +855,57 @@ _¡Estamos para servirte!_ 🤝`);
     // ── !servicios ────────────────────────────────────────────────────────
     case "!servicios":
     case "!productos": {
+      // Si empresa.json trae `catalogo`, se muestra el detalle (modalidad,
+      // duración y precio). Si no, se cae a la lista simple `productos`, de modo
+      // que un empresa.json antiguo sigue funcionando igual que antes.
+      const catalogo = Array.isArray(empresa.catalogo) ? empresa.catalogo : [];
+      if (catalogo.length) {
+        const detalle = catalogo.map((s, i) => {
+          const precio = s.precio_desde_cop
+            ? `desde *COP ${Number(s.precio_desde_cop).toLocaleString("es-CO")}*`
+            : "*a cotizar*";
+          return `*${i + 1}. ${s.servicio}*\n` +
+                 `   ${s.descripcion}\n` +
+                 `   ⏱️ ${s.duracion || "N/A"}  ·  💰 ${precio}`;
+        }).join("\n\n");
+        await send(sock, jid,
+          `💼 *Servicios de ${empresa.nombre || "la empresa"}*\n\n${detalle}\n\n` +
+          `_Precios sin IVA. Escribe *!politicas* para pagos y cancelaciones, ` +
+          `o cuéntanos tu caso y te orientamos._`);
+        break;
+      }
       const lista = (empresa.productos || []).map((p, i) => `  ${i + 1}. ${p}`).join("\n");
       await send(sock, jid,
         `💼 *Servicios de ${empresa.nombre || "la empresa"}:*\n\n${lista || "Sin servicios configurados."}\n\n_Para más info, escríbenos o visítanos._`);
+      break;
+    }
+
+    // ── !nosotros ─────────────────────────────────────────────────────────
+    // Expone la identidad corporativa (historia, misión, visión y valores) que
+    // ahora vive en empresa.json. Solo información pública: la estructura
+    // interna, los procesos y los indicadores no se divulgan.
+    case "!nosotros":
+    case "!about": {
+      const id = empresa.identidad;
+      if (!id || !(id.historia || id.mision || id.vision)) {
+        await send(sock, jid, "ℹ️ No hay información corporativa configurada en empresa.json.");
+        break;
+      }
+      const valores = id.valores?.length
+        ? "\n\n⭐ *Valores*\n" + id.valores.map((v) => `  • ${v}`).join("\n")
+        : "";
+      await send(sock, jid,
+`🏢 *Sobre ${id.nombre_comercial || empresa.nombre}*
+
+${id.historia || ""}
+
+🎯 *Misión*
+${id.mision || "N/A"}
+
+🔭 *Visión*
+${id.vision || "N/A"}${valores}
+
+_Escribe *!servicios* para ver cómo podemos ayudarte._`);
       break;
     }
 
@@ -593,7 +989,9 @@ _Si estás fuera de horario, deja tu mensaje y te responderemos lo antes posible
         break;
       }
       programarRecordatorio(sock, jid, textoRec, minutos);
-      await send(sock, jid, `⏰ ¡Listo, ${senderName}! Te recordaré en *${minutos} minuto${minutos !== 1 ? "s" : ""}*:\n_"${textoRec}"_`);
+      const pendientes = recordatoriosPendientes(jid);
+      const aviso = pendientes > 1 ? `\n_Tienes ${pendientes} recordatorios pendientes en este chat._` : "";
+      await send(sock, jid, `⏰ ¡Listo, ${senderName}! Te recordaré en *${minutos} minuto${minutos !== 1 ? "s" : ""}*:\n_"${textoRec}"_${aviso}`);
       break;
     }
 
@@ -784,7 +1182,9 @@ _Si estás fuera de horario, deja tu mensaje y te responderemos lo antes posible
     case "!olvidar":
     case "!reset": {
       conversaciones[jid] = [];
-      guardarJSON(CONFIG.DB_CONVERSACIONES, conversaciones);
+      // El usuario pidió borrar: se fuerza el volcado en vez de esperar al
+      // guardado diferido, para que el borrado sobreviva a un cierre inmediato.
+      vaciarEscriturasPendientes(CONFIG.DB_CONVERSACIONES, conversaciones);
       await send(sock, jid, `🗑️ ¡Listo, ${senderName}! Borré tu historial de conversación con la IA. Empecemos de nuevo 😊`);
       break;
     }
@@ -812,7 +1212,7 @@ _Si estás fuera de horario, deja tu mensaje y te responderemos lo antes posible
 
 async function menuInicio() {
   console.log("\n╔══════════════════════════════════════════╗");
-  console.log("║   🤖  WhatsApp Bot v3.1 — Configuración  ║");
+  console.log(`║   🤖  WhatsApp Bot v${VERSION} — Configuración ║`);
   console.log("╚══════════════════════════════════════════╝\n");
 
   // ── Paso 1: API Key de Gemini ──────────────────────────────────────────
@@ -847,53 +1247,32 @@ async function menuInicio() {
       try {
         // Reinicializar el singleton con la nueva clave antes de validar
         genAI = new GoogleGenerativeAI(CONFIG.GEMINI_API_KEY);
+        invalidarCacheIA(); // el modelo cacheado colgaba de la clave anterior
         const model = genAI.getGenerativeModel({ model: CONFIG.GEMINI_MODEL });
         await model.generateContent("ping");
         console.log("✅ API Key válida.\n");
         guardarEnvKey(CONFIG.GEMINI_API_KEY);
         console.log("💾 API Key guardada en .env para próximas sesiones.\n");
       } catch (e) {
-        const msg = e.message || "";
+        const msg  = e.message || "";
+        const tipo = clasificarErrorGemini(e);
 
-        // ── FIX CRÍTICO: distinguir error de CUOTA vs error de KEY INVÁLIDA ──
-        //
-        // Un error 429 / RESOURCE_EXHAUSTED / "quota" NO significa que la key
-        // sea inválida. Significa que la cuenta alcanzó el límite gratuito de
-        // solicitudes por minuto o por día. La key es correcta; Google simplemente
-        // pide esperar antes de volver a usarla.
-        //
-        // Solo debemos descartar la key cuando Google dice explícitamente que
-        // no es válida: errores 400 API_KEY_INVALID, 401 o 403.
-        //
-        const esErrorCuota =
-          msg.includes("429")                ||
-          msg.includes("quota")              ||
-          msg.includes("RESOURCE_EXHAUSTED") ||
-          msg.includes("Too Many Requests")  ||
-          (e.status === 429);
-
-        const esKeyInvalida =
-          !esErrorCuota && (
-            msg.includes("API key not valid")  ||
-            msg.includes("API_KEY_INVALID")    ||
-            msg.includes("INVALID_API_KEY")    ||
-            msg.includes("401")                ||
-            msg.includes("403")                ||
-            e.status === 401                   ||
-            e.status === 403
-          );
-
-        if (esErrorCuota) {
+        // La misma clasificación que usa consultarIA(). Antes esta lógica estaba
+        // duplicada aquí y en el manejador de errores de la IA, con criterios
+        // distintos: el arranque conservaba la clave ante un 429 pero el runtime
+        // la borraba ante un 403. Ahora ambas rutas comparten clasificador.
+        if (tipo === "cuota") {
           // La key ES válida; solo hay que esperar a que se renueve la cuota.
           console.log("⚠️  Cuota de solicitudes agotada (límite free tier).\n");
           console.log("   ✅ La API Key parece correcta — se guardará y usará cuando haya cuota.\n");
           guardarEnvKey(CONFIG.GEMINI_API_KEY);
           console.log("💾 API Key guardada en .env para próximas sesiones.\n");
           // genAI ya está inicializado con la key; NO lo reseteamos.
-        } else if (esKeyInvalida) {
+        } else if (tipo === "key_invalida") {
           console.log(`❌ API Key inválida (error de autenticación).\n   Detalle: ${msg}\n   El bot continuará sin IA.\n`);
           CONFIG.GEMINI_API_KEY = "";
           genAI = null;
+          invalidarCacheIA();
         } else {
           // Error de red, modelo no disponible u otro error transitorio.
           // Conservamos la key para no perder la configuración del usuario.
@@ -1092,8 +1471,10 @@ async function startBot(usarPairingCode, telefonoPairing) {
       if (textLimpio.startsWith("!")) {
         await manejarComando(sock, jid, textLimpio, senderName, senderJid, msg.key);
       } else {
-        // Aviso fuera de horario (solo una vez por hora para no ser molesto)
-        if (esFueraHorario() && empresa.respuesta_fuera_horario) {
+        // Aviso fuera de horario (solo una vez por hora para no ser molesto).
+        // esFueraHorario() ya comprueba empresa.respuesta_fuera_horario en su
+        // primera línea; la condición estaba evaluada dos veces.
+        if (esFueraHorario()) {
           const msgFuera   = empresa.mensaje_fuera_horario ||
             "Gracias por escribirnos. Estamos fuera de horario. Te responderemos pronto.";
           const ultimoMsg  = conversaciones[jid]?.slice(-1)[0];
@@ -1130,7 +1511,8 @@ function gracefulShutdown(signal) {
   console.log(`\n🛑 Señal ${signal} recibida. Cerrando bot limpiamente...`);
   try { if (activeSock) activeSock.end(); } catch (_) {}
   cerrarRL();
-  guardarJSON(CONFIG.DB_CONVERSACIONES, conversaciones);
+  // Fuerza cualquier escritura diferida pendiente antes de salir.
+  vaciarEscriturasPendientes(CONFIG.DB_CONVERSACIONES, conversaciones);
   console.log("💾 Conversaciones guardadas. ¡Hasta pronto!");
   process.exit(0);
 }

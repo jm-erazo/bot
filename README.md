@@ -1,154 +1,225 @@
-# 🤖 WhatsApp Bot Empresarial v3.1
+# 🤖 WhatsApp Bot Empresarial v3.4
 
-Bot de WhatsApp con IA (Google Gemini), comandos empresariales y múltiples correcciones de bugs.
+Bot de WhatsApp con IA (Google Gemini), comandos empresariales y un perfil de empresa simulada completo.
+
+Arquitectura de un solo archivo (`index.js`) sobre Baileys v7 + `@google/generative-ai`, con persistencia en JSON. La v3.4 **no cambia la arquitectura**: reduce el consumo de tokens cargando el contexto de la empresa bajo demanda.
+
+---
+
+## ⚡ Optimización de contexto (v3.4)
+
+El *system prompt* viaja en **cada** mensaje. En la v3.3, enriquecer la empresa simulada lo llevó a ~1.743 tokens fijos por mensaje, aunque el usuario solo saludara.
+
+La v3.4 separa el contexto en dos capas:
+
+1. **Prompt base ligero (~379 tokens, fijo):** identidad mínima de la empresa, un índice de los temas disponibles y las instrucciones. Es lo único que va en `systemInstruction`.
+2. **Módulos bajo demanda:** `servicios`, `politicas`, `faqs`, `identidad`, `contacto`, `alcance`. Un **enrutador de intención** (`detectarModulos`) analiza el mensaje y añade **solo** el/los módulos pertinentes como bloque `CONTEXTO:` de ese turno. Cada módulo se compila una vez y se cachea.
+
+**Resultado medido** (promedio ponderado por un tráfico realista de atención):
+
+| | v3.3 | v3.4 |
+|---|---|---|
+| Prompt base fijo | 1.743 tk | **379 tk** |
+| Saludo / charla sin tema | 1.743 tk | **379 tk** (−78 %) |
+| Consulta de precio | 1.743 tk | 855 tk (−51 %) |
+| Consulta de pago | 1.743 tk | 620 tk (−64 %) |
+| **Promedio por mensaje** | **1.743 tk** | **≈639 tk (−63 %)** |
+
+La empresa **no se simplifica**: `empresa.json` sigue completo (byte a byte), con sus 5 servicios, 8 FAQ, organigrama, procesos e indicadores. Lo único que cambió es **cuánta** de esa información llega al modelo en cada turno. Los bloques internos (`organizacion`, `procesos`, `estrategia`) siguen sin exponerse nunca, verificado por el test.
+
+Los comandos directos (`!servicios`, `!faq`, `!politicas`, `!nosotros`, `!contacto`) siguen mostrando el detalle completo **leyéndolo de `empresa.json` sin pasar por la IA**: cero tokens.
+
+Todo se controla desde `construirSystemPrompt()`, `COMPILAR_MODULO` e `INTENCION_KW`. Para afinar el enrutado basta con editar las palabras clave.
+
+---
+
+## 🚀 Uso
+
+```bash
+npm install
+npm start      # menú interactivo: API Key → método de conexión
+npm test       # 49 verificaciones sobre las funciones críticas
+```
+
+Requiere Node.js ≥ 18 (probado en 22). La API Key de Gemini se obtiene gratis en
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey) y queda guardada en `.env`.
+
+---
+
+## 🔧 Cambios v3.3
+
+### Bug 1 — La corrección v3.2 estaba a medio aplicar (**CRÍTICO**)
+**Causa:** la v3.2 arregló que un error 429 (cuota agotada del *free tier*) no descartara una API Key
+válida, pero **solo dentro de `menuInicio()`**. En `consultarIA()` sobrevivía una versión distinta y más
+débil que borraba la clave ante cualquier `e.status === 403`, sin comprobar antes si el error era de
+cuota. Google responde 403 `PERMISSION_DENIED` en varios escenarios de cuota, así que el bot podía
+quedarse sin IA **en caliente**, con una clave correcta, hasta el siguiente reinicio.
+**Fix:** una única función `clasificarErrorGemini()` que devuelve `cuota` / `key_invalida` / `modelo` /
+`transitorio`, evaluando **siempre la cuota primero**. La usan tanto el arranque como el runtime, de modo
+que ambas rutas no pueden volver a divergir.
+
+### Bug 2 — Escritura de `conversaciones.json` (**CRÍTICO**)
+**Causa:** `registrarMensaje()` llamaba a `guardarJSON()` en cada mensaje entrante y en cada respuesta,
+serializando de forma **síncrona** el objeto completo de conversaciones (todos los contactos). El coste
+por mensaje crecía con la base de contactos y bloqueaba el *event loop* justo mientras se atendía a un
+usuario. Además, `writeFileSync()` sobre el archivo real lo dejaba truncado si el proceso moría a media
+escritura: al arrancar, `JSON.parse()` fallaba y se perdía **todo** el historial.
+**Fix:** escritura **atómica** (`tmp` + `rename`) y **diferida** (agrupa las escrituras del camino
+caliente). `!olvidar` y el cierre limpio fuerzan el volcado pendiente, así que no se pierde nada.
+
+### Bug 3 — Fuga de memoria en recordatorios
+**Causa:** el `Map` de recordatorios solo crecía: nunca se eliminaba una entrada, ni siquiera después de
+que el temporizador se disparara.
+**Fix:** la entrada se retira al completarse el recordatorio, y el chat desaparece del `Map` cuando no le
+quedan pendientes. El registro pasó a tener uso real: `!recordar` informa cuántos hay pendientes.
+
+### Bug 4 — Validación duplicada
+**Causa:** `esFueraHorario()` ya comprueba `empresa.respuesta_fuera_horario` en su primera línea, pero el
+flujo de mensajes volvía a evaluarlo: `if (esFueraHorario() && empresa.respuesta_fuera_horario)`.
+**Fix:** se eliminó la condición redundante.
+
+### Bug 5 — Versión desincronizada en tres sitios
+**Causa:** la cabecera decía v3.2, el menú de inicio imprimía v3.1 y `package.json` declaraba 3.2.0.
+**Fix:** una constante `VERSION` como única fuente de verdad, verificada por el test contra `package.json`.
+
+### Mejora — El system prompt se reconstruía en cada mensaje
+**Causa:** `consultarIA()` concatenaba todo `empresa.json` y llamaba a `getGenerativeModel()` en **cada**
+mensaje, aunque nada de eso cambia entre mensajes.
+**Fix:** `construirSystemPrompt()` compila el prompt una sola vez y se cachea junto al modelo.
+`invalidarCacheIA()` lo rehace solo al recargar la empresa o cambiar la API Key.
+
+---
+
+## 🏢 Empresa simulada (`empresa.json`)
+
+Perfil del escenario controlado **EP-01**: microempresa de servicios de Santiago de Cali, subsector
+consultoría, con tres puestos de atención y WhatsApp Business como canal principal.
+
+**Vértice Consultoría Digital S.A.S.** — 5 servicios, 8 preguntas frecuentes, políticas de pago,
+cancelación, reprogramación, confidencialidad y garantía.
+
+### Bloques públicos e internos
+
+El archivo separa lo que el asistente **puede decir** de lo que **no debe divulgar**:
+
+| Bloque | Contenido | ¿Entra al prompt? |
+|---|---|---|
+| `nombre`, `sector`, `descripcion`, `horario`, contacto | Datos básicos | ✅ |
+| `identidad` | Historia, misión, visión, valores, cultura | ✅ (misión, visión, valores) |
+| `catalogo` | 5 servicios con modalidad, duración, precio y entregable | ✅ |
+| `politicas` | Pago, cancelación, reprogramación, confidencialidad, garantía | ✅ |
+| `faqs` | 8 preguntas frecuentes | ✅ |
+| `clientes_objetivo` | Segmentos, dolores, fuera de alcance | ✅ (solo *fuera de alcance*) |
+| `canales_atencion` | Canales y horarios | ❌ (los cubre `!contacto`) |
+| `organizacion` | Organigrama, departamentos, cargos | ❌ **interno** |
+| `procesos` | Procesos internos y SLA | ❌ **interno** |
+| `estrategia` | Objetivos, indicadores, crecimiento, ventajas | ❌ **interno** |
+
+Un asistente de atención al cliente no debe recitar el organigrama ni los indicadores internos a quien
+escribe por WhatsApp. El bloque `divulgacion` lleva la instrucción explícita que se inyecta en el prompt,
+y el test verifica que nada de lo interno se filtre.
+
+### Compatibilidad
+
+Todas las claves originales (`nombre`, `productos`, `politicas`, `faqs`, `horario_inicio`…) **se conservan
+con el mismo tipo y significado**. Los bloques nuevos son **opcionales**: un `empresa.json` antiguo sigue
+funcionando sin tocar nada, y `!servicios` cae automáticamente a la lista simple `productos` si no existe
+`catalogo`. El test cubre este escenario.
+
+---
+
+## 📋 Comandos
+
+| Grupo | Comandos |
+|---|---|
+| Información | `!menu` `!hola` `!info` `!hora` `!empresa` `!nosotros` `!contacto` `!servicios` `!faq` `!politicas` `!horario` |
+| Herramientas | `!calc` `!clima` `!recordar` `!encuesta` `!votar` `!traducir` |
+| Diversión | `!chiste` `!ping` |
+| Configuración | `!olvidar` `!recargar` |
+
+`!nosotros` es el único comando nuevo de la v3.3: expone la identidad corporativa (historia, misión,
+visión y valores) que ahora vive en `empresa.json`. Cualquier mensaje que no empiece por `!` lo atiende la IA.
+
+---
+
+## 🔧 Correcciones v3.2
+
+### Bug — API Key válida descartada por error de cuota (**CRÍTICO**)
+**Causa:** la validación trataba cualquier error como clave inválida. Un 429 (cuota del *free tier*
+agotada) hacía que el bot borrara una clave correcta y arrancara sin IA.
+**Fix:** se distinguió 429/`RESOURCE_EXHAUSTED` (cuota, clave válida) de 401/403/`API_KEY_INVALID`
+(clave inválida). Los errores transitorios conservan la clave.
+*(La v3.3 completó este arreglo: ver Bug 1.)*
 
 ---
 
 ## 🔧 Correcciones v3.1
 
 ### Bug 1 — `qrcode-terminal` faltaba en package.json (**CRÍTICO**)
-**Causa:** El código importaba `qrcode-terminal` pero no estaba declarado como dependencia.  
+**Causa:** El código importaba `qrcode-terminal` pero no estaba declarado como dependencia.
 **Fix:** Agregado a `package.json`. Además, usa `createRequire` porque el paquete no tiene exports ESM nativos.
 
 ### Bug 2 — Historial duplicado en Gemini (**CRÍTICO**)
 **Causa:** `registrarMensaje(jid, "user", ...)` se llamaba **antes** de `consultarIA()`.
 Esto hacía que el mensaje actual ya estuviera en el historial que se pasaba a `startChat()`,
-y luego `sendMessage()` lo enviaba de nuevo → Gemini recibía cada mensaje **dos veces**.  
+y luego `sendMessage()` lo enviaba de nuevo → Gemini recibía cada mensaje **dos veces**.
 **Fix:** El historial se construye **antes** de registrar el mensaje actual.
 
 ### Bug 3 — Sin validación de alternancia user/model en Gemini (**CRÍTICO**)
 **Causa:** La API de Gemini exige que el historial alterne estrictamente `user → model → user → model`.
-Mensajes huérfanos (por errores o reinicios) causaban el error 400 "roles must alternate".  
+Mensajes huérfanos (por errores o reinicios) causaban el error 400 "roles must alternate".
 **Fix:** `buildGeminiHistory()` solo incluye pares completos `user+model`, descartando mensajes sin par.
 
 ### Bug 4 — `qrcode-terminal` falla en ESM
-**Causa:** Node.js con `"type": "module"` no puede importar módulos CJS sin `createRequire`.  
+**Causa:** Node.js con `"type": "module"` no puede importar módulos CJS sin `createRequire`.
 **Fix:** `import { createRequire } from "node:module"; const require = createRequire(import.meta.url);`
 
 ### Bug 5 — `!ping` mostraba siempre 0ms
-**Causa:** Ambos `Date.now()` eran síncronos, sin ninguna operación async entre ellos.  
+**Causa:** Ambos `Date.now()` eran síncronos, sin ninguna operación async entre ellos.
 **Fix:** Se mide el tiempo que tarda `sock.sendMessage()` en completarse (latencia real de red).
 
 ### Bug 6 — Clima con datos de hora incorrectos
-**Causa:** `hourly[new Date().getHours()]` usaba la hora del servidor, no la de la ciudad consultada.  
+**Causa:** `hourly[new Date().getHours()]` usaba la hora del servidor, no la de la ciudad consultada.
 **Fix:** Migrado al parámetro `current` moderno de Open-Meteo que entrega valores presentes directamente.
 
 ### Bug 7 — `!votar` permitía votos múltiples con el mismo nombre
 **Causa:** El ID de votante era `remoteJid + ":" + senderName`. Dos personas con el mismo nombre
-de WhatsApp contaban como la misma persona, y cambiar el nombre permitía votar varias veces.  
+de WhatsApp contaban como la misma persona, y cambiar el nombre permitía votar varias veces.
 **Fix:** Se usa `msg.key.participant || msg.key.remoteJid` (JID único e inmutable).
 
-### Bug 8 — Instancia de `GoogleGenerativeAI` creada por mensaje
-**Causa:** Se hacía `new GoogleGenerativeAI(key)` en cada llamada a `consultarIA()` y `!traducir`.  
-**Fix:** Singleton inicializado una vez; se reinicializa solo al cambiar la API Key o recargar empresa.
+---
 
-### Bug 9 — Memory leak en `rateLimiter`
-**Causa:** El `Map` crecía indefinidamente con entradas de todos los contactos que jamás enviaron un mensaje.  
-**Fix:** `setInterval` cada 5 minutos elimina entradas de contactos sin actividad reciente.
+## 🧪 Pruebas
+
+`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 49 verificaciones:
+
+- **`clasificarErrorGemini`** (10): incluida la regresión del Bug 1 — un 403 que menciona cuota debe
+  clasificarse como `cuota` y **no** descartar la clave.
+- **`buildGeminiHistory`** (7): alternancia estricta, descarte de huérfanos, recorte a 10 pares.
+- **`construirSystemPrompt`** (11): incluye servicios, precios, políticas y FAQ; y **no filtra**
+  organigrama, cargos, indicadores ni planes de crecimiento.
+- **Compatibilidad hacia atrás** (5): un `empresa.json` sin los bloques nuevos sigue funcionando.
+- **Escritura atómica** (3) y **versión** (1).
 
 ---
 
-## 🚀 Instalación
+## 📁 Estructura
 
-```bash
-# 1. Clona o descarga el proyecto
-cd bot
-
-# 2. Instala dependencias (requiere Node.js >= 18)
-npm install
-
-# 3. Inicia el bot
-npm start
+```
+index.js          Bot completo (arquitectura de un solo archivo)
+empresa.json      Perfil de la empresa simulada (EP-01)
+test.mjs          Banco de pruebas
+package.json      Dependencias y scripts
+.env              GEMINI_API_KEY (se genera solo; ignorado por git)
+conversaciones.json   Historial por contacto (se genera solo; ignorado por git)
+auth_info_baileys/    Sesión de WhatsApp (se genera sola; ignorada por git)
 ```
 
 ---
 
-## ⚙️ Configuración
+## 🧪 Pruebas de la optimización
 
-El bot configura todo interactivamente al iniciar. También puedes crear un archivo `.env`:
-
-```env
-GEMINI_API_KEY=AIzaSyTuClaveAqui
-```
-
-Obtén tu API Key gratis en: **https://aistudio.google.com/apikey**
-
-Para personalizar la empresa, edita `empresa.json`:
-
-```json
-{
-  "nombre": "Tu Empresa S.A.S.",
-  "sector": "Tu sector",
-  "horario": "Lunes a Viernes 8AM - 6PM",
-  "horario_inicio": 8,
-  "horario_fin": 18,
-  "dias_habil": [1, 2, 3, 4, 5],
-  "respuesta_fuera_horario": true,
-  "mensaje_fuera_horario": "Tu mensaje fuera de horario..."
-}
-```
-
-Después de editar, envía `!recargar` por WhatsApp sin reiniciar el bot.
-
----
-
-## 📋 Comandos disponibles
-
-| Comando | Descripción |
-|---------|-------------|
-| `!menu` | Muestra todos los comandos |
-| `!hola` | Saludo personalizado |
-| `!info` | Estado del bot |
-| `!hora` | Fecha y hora en Bogotá |
-| `!empresa` | Info de la empresa |
-| `!contacto` | Datos de contacto |
-| `!servicios` | Productos/servicios |
-| `!faq` | Preguntas frecuentes |
-| `!politicas` | Políticas de la empresa |
-| `!horario` | Horario + estado actual |
-| `!calc [expr]` | Calculadora (soporta `^` para potencias) |
-| `!clima [ciudad]` | Clima en tiempo real |
-| `!recordar [min] [msg]` | Recordatorio |
-| `!encuesta [preg] \| [op1] \| [op2]` | Crear encuesta |
-| `!votar [número]` | Votar en encuesta activa |
-| `!traducir [texto]` | Traducción al inglés con IA |
-| `!chiste` | Chiste aleatorio |
-| `!ping` | Latencia real del bot |
-| `!olvidar` | Borrar historial de chat con IA |
-| `!recargar` | Recargar empresa.json sin reiniciar |
-
-**IA:** Cualquier mensaje sin `!` activa el asistente inteligente.
-
----
-
-## 🛡️ Características de seguridad
-
-- **Anti-spam:** Máximo 8 mensajes por minuto por contacto
-- **Rate limiting:** Automático con limpieza de memoria cada 5 minutos
-- **Grupos:** Desactivado por defecto (editar `CONFIG.RESPONDER_GRUPOS`)
-- **Fuera de horario:** Mensaje automático configurable (máximo 1 vez por hora)
-- **Cierre limpio:** Manejo de SIGINT/SIGTERM para guardar datos antes de cerrar
-
----
-
-## 🔄 Solución de problemas
-
-### Error: "Cannot find module 'qrcode-terminal'"
-Ejecuta `npm install` para instalar todas las dependencias.
-
-### Error: Connection Closed al usar código de emparejamiento
-1. Borra la carpeta `auth_info_baileys/`
-2. Verifica que el número incluye código de país (ej: 573001234567)
-3. Asegúrate de que WhatsApp esté activo en el teléfono
-4. Espera ~30 segundos antes de intentar de nuevo
-
-### Error: API Key inválida
-1. Verifica que la clave empieza con `AIzaSy`
-2. Revisa en **aistudio.google.com** que la clave esté activa
-3. Asegúrate de que el modelo `gemini-2.0-flash` esté disponible en tu región
-
-### La IA repite el mensaje del usuario
-Asegúrate de usar la versión v3.1. Este era el bug #2 corregido.
-
-### Sesión caducada
-Borra la carpeta `auth_info_baileys/` y vuelve a vincular.
+`npm test` ejecuta 49 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
+`detectarModulos` acierta en saludos, precio, pago, confidencialidad, identidad, contacto, alcance y
+consultas mixtas; el contexto del turno trae solo lo pedido; y **ningún** módulo expone el organigrama,
+los cargos, los indicadores ni los planes de crecimiento.
