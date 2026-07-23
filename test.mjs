@@ -147,18 +147,28 @@ console.log("\n6. Versión");
 const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
 eq("VERSION coincide con package.json", m.VERSION, pkg.version);
 
-// ── 7. Control de pensamiento (evita respuestas truncadas) ───────────────────
-console.log("\n7. construirGenerationConfig — thinking según modelo");
+// ── 7. generationConfig — seguro por defecto (evita el 400 invalid argument) ──
+console.log("\n7. construirGenerationConfig — compatible con cualquier modelo");
 que("maxOutputTokens holgado (≥ 800)", m.CONFIG.MAX_TOKENS_RESPUESTA >= 800);
-que("incluye thinkingConfig", !!m.construirGenerationConfig().thinkingConfig);
-const modeloOrig = m.CONFIG.GEMINI_MODEL;
-m.CONFIG.GEMINI_MODEL = "gemini-2.5-flash";
-que("2.5 → thinkingBudget 0 (desactivado)", m.construirGenerationConfig().thinkingConfig.thinkingBudget === 0);
-m.CONFIG.GEMINI_MODEL = "gemini-flash-latest";
-que("alias -latest → budget definido", m.construirGenerationConfig().thinkingConfig.thinkingBudget === 0);
-m.CONFIG.GEMINI_MODEL = "gemini-3.5-flash";
-que("3.x → thinkingLevel 'low' (no se puede apagar)", m.construirGenerationConfig().thinkingConfig.thinkingLevel === "low");
-m.CONFIG.GEMINI_MODEL = modeloOrig;
+const budgetOrig = m.CONFIG.GEMINI_THINKING_BUDGET;
+m.CONFIG.GEMINI_THINKING_BUDGET = null;
+que("por defecto NO envía thinkingConfig (compatible con todo modelo)",
+    m.construirGenerationConfig().thinkingConfig === undefined);
+m.CONFIG.GEMINI_THINKING_BUDGET = 0;
+que("si se pide (0), añade thinkingBudget",
+    m.construirGenerationConfig().thinkingConfig?.thinkingBudget === 0);
+m.CONFIG.GEMINI_THINKING_BUDGET = 128;
+que("si se pide (128), respeta el presupuesto",
+    m.construirGenerationConfig().thinkingConfig?.thinkingBudget === 128);
+m.CONFIG.GEMINI_THINKING_BUDGET = budgetOrig;
+
+console.log("\n7b. clasificarErrorGemini — el 400 no debe reintentar en bucle");
+const err400 = Object.assign(
+  new Error("[GoogleGenerativeAI Error]: Error fetching from https://...gemini-flash-latest:generateContent: [400 Bad Request] Request contains an invalid argument."),
+  { status: 400 });
+eq("400 'invalid argument' → modelo (no transitorio)", m.clasificarErrorGemini(err400), "modelo");
+eq("400 sin status, solo texto → modelo",
+   m.clasificarErrorGemini(new Error("[400 Bad Request] Request contains an invalid argument.")), "modelo");
 
 fs.unlinkSync(tmp);
 console.log(`\n${"─".repeat(46)}\nRESULTADO: ${ok} correctas, ${fail} fallidas\n`);

@@ -1,6 +1,17 @@
 /**
- * WhatsApp Bot Empresarial — v3.4.2 (GEMINI EDITION)
+ * WhatsApp Bot Empresarial — v3.4.3 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
+ * Cambios v3.4.3 (400 invalid argument; sin cambios de arquitectura):
+ * 🔧 El thinkingConfig añadido en la v3.4.2 provocaba "400 Bad Request: invalid
+ *    argument" con el alias gemini-flash-latest: el modelo al que apunta no
+ *    acepta ese campo. thinkingConfig ya NO se envía por defecto
+ *    (GEMINI_THINKING_BUDGET = null); el límite de 800 tokens basta para que las
+ *    respuestas no se corten. Se puede reactivar poniendo un número si el modelo
+ *    lo soporta.
+ * 🔧 El 400 de argumento inválido se clasificaba como "transitorio" y el bot
+ *    reintentaba en bucle. Ahora se reconoce como error de configuración
+ *    ("modelo") y responde con un aviso claro en vez de reintentar sin fin.
+ *
  * Cambios v3.4.2 (respuestas cortadas; sin cambios de arquitectura):
  * 🔧 Las respuestas se truncaban a media frase. Causa: los modelos Gemini 2.5+
  *    Flash "piensan" antes de responder y esos tokens de razonamiento se
@@ -108,7 +119,7 @@ const qrcode = require("qrcode-terminal");
 // Única fuente de verdad de la versión: debe coincidir con package.json.
 // Antes estaba escrita a mano en la cabecera, en el menú de inicio y en el
 // README, y las tres se habían desincronizado.
-const VERSION = "3.4.2";
+const VERSION = "3.4.3";
 
 const CONFIG = {
   // IA — Google Gemini
@@ -127,11 +138,18 @@ const CONFIG = {
   // sobra para respuestas de WhatsApp (máx. 3 párrafos) incluso si el modelo
   // reserva algo para pensar.
   MAX_TOKENS_RESPUESTA:    800,
-  // Pensamiento del modelo. 0 = desactivado (respuestas directas, más rápidas y
-  // baratas; ideal para un bot de atención con respuestas cortas). Los modelos
-  // 2.5 Flash lo respetan; los 3.x Flash no permiten apagarlo del todo, así que
-  // el código cae a un nivel bajo automáticamente (ver obtenerModeloIA).
-  GEMINI_THINKING_BUDGET:  0,
+  // Control del "pensamiento" del modelo. Desactivado por defecto (null) porque
+  // NO todos los modelos aceptan thinkingConfig: enviarlo a un modelo que no lo
+  // soporta —o a uno donde el pensamiento es constante, como algunas versiones a
+  // las que apunta el alias gemini-flash-latest— provoca un 400 INVALID_ARGUMENT
+  // y el bot deja de responder. El límite de 800 tokens ya evita por sí solo que
+  // las respuestas se corten, así que este ajuste es opcional.
+  //   null → no se envía thinkingConfig (compatible con cualquier modelo).
+  //   0    → intenta desactivar el pensamiento (solo modelos 2.5 que lo permitan).
+  //   >0   → presupuesto de pensamiento en tokens (p. ej. 128).
+  // Si tu modelo es 2.5-flash "clásico" y quieres respuestas aún más rápidas,
+  // prueba 0; si ves un 400 al escribir, vuelve a dejarlo en null.
+  GEMINI_THINKING_BUDGET:  null,
 
   // Archivos
   AUTH_FOLDER:             "auth_info_baileys",
@@ -414,7 +432,17 @@ function clasificarErrorGemini(e) {
     msg.includes("401")
   ) return "key_invalida";
 
-  if (msg.includes("404") || /not found/i.test(msg) || msg.includes("INVALID_ARGUMENT")) {
+  // Modelo o argumento no válido: no tiene sentido reintentar, es de config.
+  // El texto llega en varias formas: "404", "not found", "INVALID_ARGUMENT" o
+  // "[400 Bad Request] Request contains an invalid argument" (minúsculas).
+  if (
+    msg.includes("404") ||
+    /not found/i.test(msg) ||
+    /invalid argument/i.test(msg) ||
+    msg.includes("INVALID_ARGUMENT") ||
+    status === 400 ||
+    msg.includes("400")
+  ) {
     return "modelo";
   }
 
@@ -598,24 +626,23 @@ function invalidarCacheIA() {
 }
 
 /**
- * Config de generación para las llamadas a Gemini, con el control de pensamiento
- * adaptado a la familia del modelo:
- *   - Gemini 2.5 Flash: acepta thinkingBudget (0 = desactivado).
- *   - Gemini 3.x Flash: no permite apagarlo; usa thinkingLevel ("low" como
- *     mínimo). Se detecta por el nombre del modelo.
- * Así, si el alias "gemini-flash-latest" salta de 2.5 a 3.x en el futuro, el bot
- * sigue funcionando sin quedarse con respuestas truncadas.
+ * Config de generación para las llamadas a Gemini.
+ *
+ * Por defecto solo fija maxOutputTokens, que es lo único universalmente aceptado
+ * y suficiente para evitar respuestas cortadas. El thinkingConfig NO se envía a
+ * menos que el operador lo pida explícitamente (CONFIG.GEMINI_THINKING_BUDGET !=
+ * null), porque enviarlo a un modelo que no lo soporta —o donde el pensamiento
+ * es constante, como algunas versiones del alias gemini-flash-latest— devuelve
+ * un 400 INVALID_ARGUMENT y el bot deja de responder.
  */
 function construirGenerationConfig() {
   const cfg = { maxOutputTokens: CONFIG.MAX_TOKENS_RESPUESTA };
-  const modelo = String(CONFIG.GEMINI_MODEL);
+  const budget = CONFIG.GEMINI_THINKING_BUDGET;
 
-  if (/gemini-3/.test(modelo)) {
-    // Familia 3.x: el pensamiento no se puede desactivar; se pide el nivel mínimo.
-    cfg.thinkingConfig = { thinkingLevel: "low" };
-  } else {
-    // Familia 2.5 (y el alias -latest mientras apunte a 2.5): budget explícito.
-    cfg.thinkingConfig = { thinkingBudget: CONFIG.GEMINI_THINKING_BUDGET };
+  // Solo se añade si el operador lo configuró a un número (0 o un presupuesto).
+  // Con null (valor por defecto) no se toca: compatible con cualquier modelo.
+  if (typeof budget === "number") {
+    cfg.thinkingConfig = { thinkingBudget: budget };
   }
   return cfg;
 }
