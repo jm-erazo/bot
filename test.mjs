@@ -47,6 +47,8 @@ eq("'API key not valid' → key_invalida",       m.clasificarErrorGemini(err("AP
 eq("401 → key_invalida",                       m.clasificarErrorGemini(err("Unauthorized", 401)), "key_invalida");
 eq("403 puro → key_invalida",                  m.clasificarErrorGemini(err("PERMISSION_DENIED", 403)), "key_invalida");
 eq("404 modelo → modelo",                      m.clasificarErrorGemini(err("models/x is not found")), "modelo");
+eq("404 'no longer available' → modelo (no key_invalida)",
+                                               m.clasificarErrorGemini(err("[404 Not Found] This model models/gemini-2.5-flash is no longer available to new users.")), "modelo");
 eq("timeout de red → transitorio",             m.clasificarErrorGemini(err("fetch failed ETIMEDOUT")), "transitorio");
 
 // ── 2. buildGeminiHistory ───────────────────────────────────────────────────

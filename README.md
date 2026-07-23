@@ -1,8 +1,33 @@
-# 🤖 WhatsApp Bot Empresarial v3.4
+# 🤖 WhatsApp Bot Empresarial v3.4.1
 
 Bot de WhatsApp con IA (Google Gemini), comandos empresariales y un perfil de empresa simulada completo.
 
 Arquitectura de un solo archivo (`index.js`) sobre Baileys v7 + `@google/generative-ai`, con persistencia en JSON. La v3.4 **no cambia la arquitectura**: reduce el consumo de tokens cargando el contexto de la empresa bajo demanda.
+
+---
+
+## 🔧 Modelo de IA (v3.4.1)
+
+Google retira versiones de modelo periódicamente. `gemini-2.5-flash` empezó a
+devolver `404 "This model is no longer available to new users"` para claves
+nuevas, aunque su fecha oficial de baja sea posterior.
+
+El bot usa por defecto **`gemini-flash-latest`**, un alias que apunta siempre al
+modelo Flash vigente, así no hay que editar el código en cada jubilación.
+
+Si prefieres fijar una versión concreta o el alias fallara, averigua qué acepta
+tu clave con:
+
+```bash
+node listar-modelos.mjs
+```
+
+y copia uno de los identificadores que muestre en `CONFIG.GEMINI_MODEL`
+(`index.js`, línea ~97).
+
+> ⚠️ **Seguridad:** nunca compartas capturas donde se vea tu API Key completa.
+> Si se filtró, bórrala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+> y genera una nueva; el bot la volverá a pedir al arrancar.
 
 ---
 
@@ -38,7 +63,7 @@ Todo se controla desde `construirSystemPrompt()`, `COMPILAR_MODULO` e `INTENCION
 ```bash
 npm install
 npm start      # menú interactivo: API Key → método de conexión
-npm test       # 49 verificaciones sobre las funciones críticas
+npm test       # 50 verificaciones sobre las funciones críticas
 ```
 
 Requiere Node.js ≥ 18 (probado en 22). La API Key de Gemini se obtiene gratis en
@@ -191,7 +216,7 @@ de WhatsApp contaban como la misma persona, y cambiar el nombre permitía votar 
 
 ## 🧪 Pruebas
 
-`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 49 verificaciones:
+`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 50 verificaciones:
 
 - **`clasificarErrorGemini`** (10): incluida la regresión del Bug 1 — un 403 que menciona cuota debe
   clasificarse como `cuota` y **no** descartar la clave.
@@ -219,7 +244,7 @@ auth_info_baileys/    Sesión de WhatsApp (se genera sola; ignorada por git)
 
 ## 🧪 Pruebas de la optimización
 
-`npm test` ejecuta 49 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
+`npm test` ejecuta 50 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
 `detectarModulos` acierta en saludos, precio, pago, confidencialidad, identidad, contacto, alcance y
 consultas mixtas; el contexto del turno trae solo lo pedido; y **ningún** módulo expone el organigrama,
 los cargos, los indicadores ni los planes de crecimiento.

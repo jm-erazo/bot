@@ -1,6 +1,15 @@
 /**
- * WhatsApp Bot Empresarial — v3.4 (GEMINI EDITION)
+ * WhatsApp Bot Empresarial — v3.4.1 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
+ * Cambios v3.4.1 (compatibilidad de modelo; sin cambios de arquitectura):
+ * 🔧 Google retiró "gemini-2.5-flash" para claves nuevas (404 "no longer
+ *    available to new users"). El modelo por defecto pasa a "gemini-flash-latest",
+ *    un alias que apunta siempre al Flash vigente y evita futuros 404.
+ * 🔧 El arranque ya distingue el 404 de modelo del error de clave: antes lo
+ *    mostraba como "error temporal" genérico. Ahora dice que la CLAVE es válida
+ *    y cómo elegir un modelo disponible.
+ * ✨ Nueva utilidad: listar-modelos.mjs muestra los modelos que acepta tu clave.
+ *
  * Cambios v3.4 (optimización de contexto; arquitectura y flujo intactos):
  * ⚡ TOKENS: El system prompt fijo pasó de ~1.743 a ~320 tokens. La información
  *           detallada de la empresa (servicios, políticas, FAQ, identidad,
@@ -89,12 +98,18 @@ const qrcode = require("qrcode-terminal");
 // Única fuente de verdad de la versión: debe coincidir con package.json.
 // Antes estaba escrita a mano en la cabecera, en el menú de inicio y en el
 // README, y las tres se habían desincronizado.
-const VERSION = "3.4.0";
+const VERSION = "3.4.1";
 
 const CONFIG = {
   // IA — Google Gemini
   GEMINI_API_KEY:          process.env.GEMINI_API_KEY || cargarEnvKey(),
-  GEMINI_MODEL:            "gemini-2.5-flash",
+  // Alias "-latest": apunta siempre al modelo Flash vigente. Google retira
+  // versiones concretas (gemini-2.5-flash devolvía 404 "no longer available to
+  // new users" para claves nuevas); el alias evita tener que editar el código
+  // en cada jubilación. Si prefieres fijar una versión exacta, escribe aquí su
+  // identificador (p. ej. "gemini-2.5-flash-lite") y valida que esté disponible
+  // para tu clave con: node listar-modelos.mjs
+  GEMINI_MODEL:            "gemini-flash-latest",
   MAX_TOKENS_RESPUESTA:    500,
 
   // Archivos
@@ -626,7 +641,14 @@ async function consultarIA(preguntaUsuario, historialGemini = []) {
         return "🔑 La API Key de IA es inválida. Reinicia el bot y verifica tu clave en aistudio.google.com.";
 
       case "modelo":
-        return "⚠️ Modelo de IA no disponible. Contacta al administrador del bot.";
+        // Google retira versiones de modelo (404 "no longer available"). El
+        // administrador puede ejecutar `node listar-modelos.mjs` para ver los
+        // identificadores válidos y actualizar CONFIG.GEMINI_MODEL.
+        console.error(
+          `   El modelo "${CONFIG.GEMINI_MODEL}" no está disponible para esta clave.\n` +
+          `   Ejecuta: node listar-modelos.mjs  y actualiza CONFIG.GEMINI_MODEL en index.js.`
+        );
+        return "⚠️ Modelo de IA no disponible en este momento. El administrador debe actualizar la configuración.";
 
       default:
         return "Lo siento, hubo un problema con el asistente IA. Intenta de nuevo en unos momentos.";
@@ -1273,8 +1295,18 @@ async function menuInicio() {
           CONFIG.GEMINI_API_KEY = "";
           genAI = null;
           invalidarCacheIA();
+        } else if (tipo === "modelo") {
+          // La CLAVE es válida; lo que no existe es el modelo. Google retira
+          // versiones (404 "no longer available to new users"). Se guarda la
+          // clave y se indica cómo elegir un modelo disponible.
+          console.log(`❌ El modelo "${CONFIG.GEMINI_MODEL}" no está disponible para esta clave.\n   Detalle: ${msg}\n`);
+          console.log("   ✅ Tu API Key SÍ es válida y se guardará.");
+          console.log("   👉 Ejecuta:  node listar-modelos.mjs   para ver los modelos disponibles,");
+          console.log("      y copia uno en CONFIG.GEMINI_MODEL (index.js, línea ~97).\n");
+          guardarEnvKey(CONFIG.GEMINI_API_KEY);
+          console.log("💾 API Key guardada en .env para próximas sesiones.\n");
         } else {
-          // Error de red, modelo no disponible u otro error transitorio.
+          // Error de red u otro error transitorio.
           // Conservamos la key para no perder la configuración del usuario.
           console.log(`⚠️  No se pudo validar la API Key (error temporal): ${msg}\n`);
           console.log("   La key se guardará igualmente. Si el error persiste, revisa tu clave.\n");
