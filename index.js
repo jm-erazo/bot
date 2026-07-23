@@ -1,6 +1,16 @@
 /**
- * WhatsApp Bot Empresarial — v3.4.1 (GEMINI EDITION)
+ * WhatsApp Bot Empresarial — v3.4.2 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
+ * Cambios v3.4.2 (respuestas cortadas; sin cambios de arquitectura):
+ * 🔧 Las respuestas se truncaban a media frase. Causa: los modelos Gemini 2.5+
+ *    Flash "piensan" antes de responder y esos tokens de razonamiento se
+ *    descuentan de maxOutputTokens; con el límite en 500, el pensamiento se
+ *    comía casi todo y quedaban pocos tokens para la respuesta visible.
+ *    Solución: (1) se desactiva el pensamiento (thinkingBudget: 0 en 2.5;
+ *    thinkingLevel "low" en 3.x, que no permite apagarlo); (2) el límite sube a
+ *    800; (3) si aun así se alcanza el límite, la respuesta se cierra con una
+ *    frase completa en vez de enviarse cortada.
+ *
  * Cambios v3.4.1 (compatibilidad de modelo; sin cambios de arquitectura):
  * 🔧 Google retiró "gemini-2.5-flash" para claves nuevas (404 "no longer
  *    available to new users"). El modelo por defecto pasa a "gemini-flash-latest",
@@ -98,7 +108,7 @@ const qrcode = require("qrcode-terminal");
 // Única fuente de verdad de la versión: debe coincidir con package.json.
 // Antes estaba escrita a mano en la cabecera, en el menú de inicio y en el
 // README, y las tres se habían desincronizado.
-const VERSION = "3.4.1";
+const VERSION = "3.4.2";
 
 const CONFIG = {
   // IA — Google Gemini
@@ -110,7 +120,18 @@ const CONFIG = {
   // identificador (p. ej. "gemini-2.5-flash-lite") y valida que esté disponible
   // para tu clave con: node listar-modelos.mjs
   GEMINI_MODEL:            "gemini-flash-latest",
-  MAX_TOKENS_RESPUESTA:    500,
+  // Presupuesto de tokens de la respuesta VISIBLE. Los modelos Gemini 2.5+ Flash
+  // "piensan" antes de responder y esos tokens de razonamiento se descuentan de
+  // este mismo presupuesto. Con un valor bajo (p. ej. 500), el pensamiento se
+  // come casi todo y la respuesta se corta a media frase. 800 deja margen de
+  // sobra para respuestas de WhatsApp (máx. 3 párrafos) incluso si el modelo
+  // reserva algo para pensar.
+  MAX_TOKENS_RESPUESTA:    800,
+  // Pensamiento del modelo. 0 = desactivado (respuestas directas, más rápidas y
+  // baratas; ideal para un bot de atención con respuestas cortas). Los modelos
+  // 2.5 Flash lo respetan; los 3.x Flash no permiten apagarlo del todo, así que
+  // el código cae a un nivel bajo automáticamente (ver obtenerModeloIA).
+  GEMINI_THINKING_BUDGET:  0,
 
   // Archivos
   AUTH_FOLDER:             "auth_info_baileys",
@@ -576,6 +597,29 @@ function invalidarCacheIA() {
   moduloCache       = {}; // los módulos dependen de empresa.json
 }
 
+/**
+ * Config de generación para las llamadas a Gemini, con el control de pensamiento
+ * adaptado a la familia del modelo:
+ *   - Gemini 2.5 Flash: acepta thinkingBudget (0 = desactivado).
+ *   - Gemini 3.x Flash: no permite apagarlo; usa thinkingLevel ("low" como
+ *     mínimo). Se detecta por el nombre del modelo.
+ * Así, si el alias "gemini-flash-latest" salta de 2.5 a 3.x en el futuro, el bot
+ * sigue funcionando sin quedarse con respuestas truncadas.
+ */
+function construirGenerationConfig() {
+  const cfg = { maxOutputTokens: CONFIG.MAX_TOKENS_RESPUESTA };
+  const modelo = String(CONFIG.GEMINI_MODEL);
+
+  if (/gemini-3/.test(modelo)) {
+    // Familia 3.x: el pensamiento no se puede desactivar; se pide el nivel mínimo.
+    cfg.thinkingConfig = { thinkingLevel: "low" };
+  } else {
+    // Familia 2.5 (y el alias -latest mientras apunte a 2.5): budget explícito.
+    cfg.thinkingConfig = { thinkingBudget: CONFIG.GEMINI_THINKING_BUDGET };
+  }
+  return cfg;
+}
+
 function obtenerModeloIA() {
   if (!genAI) return null;
   if (!modelCache) {
@@ -583,6 +627,7 @@ function obtenerModeloIA() {
     modelCache = genAI.getGenerativeModel({
       model: CONFIG.GEMINI_MODEL,
       systemInstruction: systemPromptCache,
+      generationConfig: construirGenerationConfig(),
     });
   }
   return modelCache;
@@ -610,10 +655,9 @@ async function consultarIA(preguntaUsuario, historialGemini = []) {
 
     // historialGemini ya está validado y NO contiene el mensaje actual.
     // sendMessage() agrega el mensaje actual al contexto internamente.
-    const chatSession = model.startChat({
-      history: historialGemini,
-      generationConfig: { maxOutputTokens: CONFIG.MAX_TOKENS_RESPUESTA },
-    });
+    // El modelo ya se crea con generationConfig (maxOutputTokens + thinking),
+    // así que no hace falta repetirla aquí.
+    const chatSession = model.startChat({ history: historialGemini });
 
     // Lazy loading: solo los módulos que la intención del mensaje requiere.
     const contexto = construirContextoTurno(preguntaUsuario);
@@ -622,7 +666,19 @@ async function consultarIA(preguntaUsuario, historialGemini = []) {
     // FIX: result.response NO es una Promise en @google/generative-ai.
     // El await adicional era innecesario; result.response ya es el objeto respuesta.
     const result = await chatSession.sendMessage(mensaje);
-    return result.response.text() || "No pude generar una respuesta.";
+    const respuesta = result.response.text() || "";
+
+    // Red de seguridad: si el modelo se detiene por límite de tokens (MAX_TOKENS),
+    // la respuesta llega cortada a media frase. Antes esto se enviaba tal cual
+    // (el usuario veía un "...¿En" sin terminar). Ahora se detecta y se cierra
+    // con una frase completa en vez de dejar la oración truncada.
+    const razon = result.response.candidates?.[0]?.finishReason;
+    if (razon === "MAX_TOKENS" && respuesta) {
+      const corte = respuesta.replace(/\s+\S*$/, "").trim();
+      return `${corte}\n\n¿Deseas que te amplíe algún punto? 😊`;
+    }
+
+    return respuesta || "No pude generar una respuesta.";
 
   } catch (e) {
     const tipo = clasificarErrorGemini(e);

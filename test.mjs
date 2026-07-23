@@ -18,6 +18,7 @@ const modulo =
   src.slice(0, corte) +
   `\nexport { clasificarErrorGemini, buildGeminiHistory, construirSystemPrompt,
             detectarModulos, construirContextoTurno, COMPILAR_MODULO,
+            construirGenerationConfig, CONFIG,
             esFueraHorario, guardarJSON, VERSION, empresa, recargarEmpresa };\n`;
 
 const tmp = path.join(dir, "__test_modulo.mjs");
@@ -145,6 +146,19 @@ fs.unlinkSync(f);
 console.log("\n6. Versión");
 const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
 eq("VERSION coincide con package.json", m.VERSION, pkg.version);
+
+// ── 7. Control de pensamiento (evita respuestas truncadas) ───────────────────
+console.log("\n7. construirGenerationConfig — thinking según modelo");
+que("maxOutputTokens holgado (≥ 800)", m.CONFIG.MAX_TOKENS_RESPUESTA >= 800);
+que("incluye thinkingConfig", !!m.construirGenerationConfig().thinkingConfig);
+const modeloOrig = m.CONFIG.GEMINI_MODEL;
+m.CONFIG.GEMINI_MODEL = "gemini-2.5-flash";
+que("2.5 → thinkingBudget 0 (desactivado)", m.construirGenerationConfig().thinkingConfig.thinkingBudget === 0);
+m.CONFIG.GEMINI_MODEL = "gemini-flash-latest";
+que("alias -latest → budget definido", m.construirGenerationConfig().thinkingConfig.thinkingBudget === 0);
+m.CONFIG.GEMINI_MODEL = "gemini-3.5-flash";
+que("3.x → thinkingLevel 'low' (no se puede apagar)", m.construirGenerationConfig().thinkingConfig.thinkingLevel === "low");
+m.CONFIG.GEMINI_MODEL = modeloOrig;
 
 fs.unlinkSync(tmp);
 console.log(`\n${"─".repeat(46)}\nRESULTADO: ${ok} correctas, ${fail} fallidas\n`);
