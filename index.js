@@ -1,6 +1,13 @@
 /**
- * WhatsApp Bot Empresarial — v3.4.3 (GEMINI EDITION)
+ * WhatsApp Bot Empresarial — v3.4.4 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
+ * Cambios v3.4.4 (cambio de modelo; sin cambios de arquitectura):
+ * 🔧 Modelo activo: "gemini-3.5-flash-lite" (familia 3.x, GA). Es el más rápido
+ *    y económico de la serie 3.5. thinkingConfig sigue sin enviarse por defecto,
+ *    así que no reaparece el 400 de la v3.4.2. MAX_TOKENS_RESPUESTA sube a 1200
+ *    porque la familia 3.x piensa por defecto ("medium") y conviene holgura para
+ *    que la respuesta no se corte.
+ *
  * Cambios v3.4.3 (400 invalid argument; sin cambios de arquitectura):
  * 🔧 El thinkingConfig añadido en la v3.4.2 provocaba "400 Bad Request: invalid
  *    argument" con el alias gemini-flash-latest: el modelo al que apunta no
@@ -119,25 +126,25 @@ const qrcode = require("qrcode-terminal");
 // Única fuente de verdad de la versión: debe coincidir con package.json.
 // Antes estaba escrita a mano en la cabecera, en el menú de inicio y en el
 // README, y las tres se habían desincronizado.
-const VERSION = "3.4.3";
+const VERSION = "3.4.4";
 
 const CONFIG = {
   // IA — Google Gemini
   GEMINI_API_KEY:          process.env.GEMINI_API_KEY || cargarEnvKey(),
-  // Alias "-latest": apunta siempre al modelo Flash vigente. Google retira
-  // versiones concretas (gemini-2.5-flash devolvía 404 "no longer available to
-  // new users" para claves nuevas); el alias evita tener que editar el código
-  // en cada jubilación. Si prefieres fijar una versión exacta, escribe aquí su
-  // identificador (p. ej. "gemini-2.5-flash-lite") y valida que esté disponible
-  // para tu clave con: node listar-modelos.mjs
-  GEMINI_MODEL:            "gemini-flash-latest",
-  // Presupuesto de tokens de la respuesta VISIBLE. Los modelos Gemini 2.5+ Flash
-  // "piensan" antes de responder y esos tokens de razonamiento se descuentan de
-  // este mismo presupuesto. Con un valor bajo (p. ej. 500), el pensamiento se
-  // come casi todo y la respuesta se corta a media frase. 800 deja margen de
-  // sobra para respuestas de WhatsApp (máx. 3 párrafos) incluso si el modelo
-  // reserva algo para pensar.
-  MAX_TOKENS_RESPUESTA:    800,
+  // Modelo activo: Gemini 3.5 Flash-Lite (familia 3.x, GA). Es el modelo más
+  // rápido y económico de la serie 3.5, pensado para alto volumen y baja latencia
+  // como este bot de atención. Identificador verificado en la documentación
+  // oficial de Google (ai.google.dev). Si algún día devuelve 404 por jubilación,
+  // ejecuta `node listar-modelos.mjs` para ver los modelos disponibles con tu
+  // clave, o usa el alias "gemini-flash-lite-latest" para que se actualice solo.
+  GEMINI_MODEL:            "gemini-3.5-flash-lite",
+  // Presupuesto de tokens de la respuesta VISIBLE. Los modelos que "piensan"
+  // (Gemini 2.5+ y toda la familia 3.x) gastan tokens de razonamiento de este
+  // mismo presupuesto antes de escribir. Con un valor bajo, el pensamiento se lo
+  // come y la respuesta se corta. 1200 da holgura para 3.x (pensamiento "medium"
+  // por defecto) sin encarecer: Flash-Lite es de los modelos más baratos y solo
+  // se pagan los tokens realmente generados, no el tope.
+  MAX_TOKENS_RESPUESTA:    1200,
   // Control del "pensamiento" del modelo. Desactivado por defecto (null) porque
   // NO todos los modelos aceptan thinkingConfig: enviarlo a un modelo que no lo
   // soporta —o a uno donde el pensamiento es constante, como algunas versiones a

@@ -1,8 +1,24 @@
-# 🤖 WhatsApp Bot Empresarial v3.4.3
+# 🤖 WhatsApp Bot Empresarial v3.4.4
 
 Bot de WhatsApp con IA (Google Gemini), comandos empresariales y un perfil de empresa simulada completo.
 
 Arquitectura de un solo archivo (`index.js`) sobre Baileys v7 + `@google/generative-ai`, con persistencia en JSON. La v3.4 **no cambia la arquitectura**: reduce el consumo de tokens cargando el contexto de la empresa bajo demanda.
+
+---
+
+## 🤖 Modelo activo: Gemini 3.5 Flash-Lite (v3.4.4)
+
+El bot usa **`gemini-3.5-flash-lite`**, el modelo más rápido y económico de la
+serie 3.5 de Google (GA, listo para producción), ideal para un bot de atención
+de alto volumen y baja latencia.
+
+Es de la familia 3.x, que "piensa" por defecto. Por eso:
+- `thinkingConfig` **no se envía** (evita el 400 de la v3.4.2).
+- `MAX_TOKENS_RESPUESTA` es 1200, con holgura para que el pensamiento no corte
+  la respuesta. Flash-Lite solo cobra los tokens generados, no el tope.
+
+Para cambiar de modelo, edita `CONFIG.GEMINI_MODEL` (`index.js`). Si algún día da
+404 por jubilación, `node listar-modelos.mjs` lista los disponibles con tu clave.
 
 ---
 
