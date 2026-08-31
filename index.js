@@ -1,6 +1,21 @@
 /**
- * WhatsApp Bot Empresarial — v3.4.4 (GEMINI EDITION)
+ * WhatsApp Bot Empresarial — v3.5.0 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
+ * Cambios v3.5.0 (respuestas ricas; sin cambios de arquitectura):
+ * ✨ Longitud adaptativa: se elimina el tope rígido de 3 párrafos. El prompt pide
+ *    respuestas cortas para preguntas simples y completas cuando hacen falta.
+ *    MAX_TOKENS_RESPUESTA sube a 4096 para no cortar respuestas largas.
+ * ✨ Formato WhatsApp: formatearParaWhatsApp() convierte el Markdown que devuelve
+ *    Gemini (**negrita**, ##, [x](url), viñetas) al formato nativo de WhatsApp
+ *    (*negrita*, _cursiva_, ~tachado~), para que el texto NO llegue con
+ *    asteriscos dobles ni se vea "mal pegado".
+ * ✨ Imágenes de la empresa: media/ contiene imágenes por tema (servicios,
+ *    contacto, nosotros…). El bot adjunta la que corresponde a la intención del
+ *    mensaje. Si falta el archivo, responde con solo texto (nunca falla).
+ * ✨ Empresa más completa: empresa.json suma beneficios por servicio, más FAQ
+ *    (13), casos de éxito, testimonios y diferenciadores. Los módulos de
+ *    contexto aprovechan todo eso; la info interna sigue sin exponerse.
+ *
  * Cambios v3.4.4 (cambio de modelo; sin cambios de arquitectura):
  * 🔧 Modelo activo: "gemini-3.5-flash-lite" (familia 3.x, GA). Es el más rápido
  *    y económico de la serie 3.5. thinkingConfig sigue sin enviarse por defecto,
@@ -113,6 +128,7 @@ import { Boom } from "@hapi/boom";
 import pino from "pino";
 import readline from "node:readline";
 import fs from "node:fs";
+import path from "node:path";
 import { createRequire } from "node:module";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -126,7 +142,7 @@ const qrcode = require("qrcode-terminal");
 // Única fuente de verdad de la versión: debe coincidir con package.json.
 // Antes estaba escrita a mano en la cabecera, en el menú de inicio y en el
 // README, y las tres se habían desincronizado.
-const VERSION = "3.4.4";
+const VERSION = "3.5.0";
 
 const CONFIG = {
   // IA — Google Gemini
@@ -140,11 +156,12 @@ const CONFIG = {
   GEMINI_MODEL:            "gemini-3.5-flash-lite",
   // Presupuesto de tokens de la respuesta VISIBLE. Los modelos que "piensan"
   // (Gemini 2.5+ y toda la familia 3.x) gastan tokens de razonamiento de este
-  // mismo presupuesto antes de escribir. Con un valor bajo, el pensamiento se lo
-  // come y la respuesta se corta. 1200 da holgura para 3.x (pensamiento "medium"
-  // por defecto) sin encarecer: Flash-Lite es de los modelos más baratos y solo
-  // se pagan los tokens realmente generados, no el tope.
-  MAX_TOKENS_RESPUESTA:    1200,
+  // mismo presupuesto antes de escribir. El usuario pidió respuestas sin límite
+  // rígido: la brevedad la controla el prompt (longitud adaptativa), no un tope
+  // bajo. 4096 deja sitio de sobra para respuestas largas cuando hacen falta,
+  // más el pensamiento del modelo. Flash-Lite solo cobra los tokens generados,
+  // así que subir el tope no encarece las respuestas cortas.
+  MAX_TOKENS_RESPUESTA:    4096,
   // Control del "pensamiento" del modelo. Desactivado por defecto (null) porque
   // NO todos los modelos aceptan thinkingConfig: enviarlo a un modelo que no lo
   // soporta —o a uno donde el pensamiento es constante, como algunas versiones a
@@ -163,6 +180,12 @@ const CONFIG = {
   DB_EMPRESA:              "empresa.json",
   DB_CONVERSACIONES:       "conversaciones.json",
   ENV_FILE:                ".env",
+  MEDIA_FOLDER:            "media",   // imágenes de la empresa (logo, servicios…)
+
+  // Envío de imágenes junto a las respuestas.
+  //   true  → adjunta la imagen de la empresa según el tema del mensaje.
+  //   false → solo texto (útil si las imágenes aún son placeholders).
+  ENVIAR_IMAGENES:         true,
 
   // Reconexión
   MAX_RECONNECT_ATTEMPTS:  8,
@@ -492,11 +515,22 @@ const COMPILAR_MODULO = {
       const precio = s.precio_desde_cop
         ? `desde COP ${Number(s.precio_desde_cop).toLocaleString("es-CO")}`
         : "precio a cotizar";
-      return `- ${s.servicio}: ${s.descripcion} (Modalidad: ${s.modalidad || "N/A"}. ` +
+      let linea = `- ${s.servicio}: ${s.descripcion} (Modalidad: ${s.modalidad || "N/A"}. ` +
              `Duración: ${s.duracion || "N/A"}. Precio ${precio}, sin IVA. ` +
              `Entregable: ${s.entregable || "N/A"}.)`;
+      if (Array.isArray(s.beneficios) && s.beneficios.length) {
+        linea += `\n  Beneficios: ${s.beneficios.join("; ")}.`;
+      }
+      if (s.ideal_para) linea += `\n  Ideal para: ${s.ideal_para}`;
+      return linea;
     }).join("\n");
-    return `Servicios:\n${detalle}`;
+    let out = `Servicios:\n${detalle}`;
+    // Diferenciadores: por qué elegir la firma (si hay consulta de servicios,
+    // suele ayudar a cerrar).
+    if (Array.isArray(e.por_que_nosotros) && e.por_que_nosotros.length) {
+      out += `\n\nPor qué elegirnos:\n- ${e.por_que_nosotros.join("\n- ")}`;
+    }
+    return out;
   },
   politicas(e) {
     const pol = e.politicas || {};
@@ -515,7 +549,18 @@ const COMPILAR_MODULO = {
     if (id.mision)   partes.push(`- Misión: ${id.mision}`);
     if (id.vision)   partes.push(`- Visión: ${id.vision}`);
     if (id.valores?.length) partes.push(`- Valores: ${id.valores.join(" ")}`);
-    return partes.length ? `Identidad de la empresa:\n${partes.join("\n")}` : "";
+    let out = partes.length ? `Identidad de la empresa:\n${partes.join("\n")}` : "";
+    if (Array.isArray(e.casos_exito) && e.casos_exito.length) {
+      const casos = e.casos_exito
+        .map((c) => `- ${c.sector}: ${c.reto} → ${c.solucion} Resultado: ${c.resultado}`)
+        .join("\n");
+      out += `\n\nCasos de éxito (anonimizados):\n${casos}`;
+    }
+    if (Array.isArray(e.testimonios) && e.testimonios.length) {
+      const tst = e.testimonios.map((t) => `- "${t.texto}" (${t.autor})`).join("\n");
+      out += `\n\nTestimonios:\n${tst}`;
+    }
+    return out;
   },
   contacto(e) {
     const canales = Array.isArray(e.canales_atencion)
@@ -591,6 +636,58 @@ function construirContextoTurno(texto) {
   return bloques.length ? `CONTEXTO:\n${bloques.join("\n\n")}` : "";
 }
 
+// ─── Imágenes de la empresa ──────────────────────────────────────────────────
+//
+// Las imágenes viven en la carpeta CONFIG.MEDIA_FOLDER ("media/"). Se envían
+// junto a la respuesta según el tema detectado, para que el mensaje se vea más
+// completo y corporativo. Si una imagen no existe, el bot envía solo texto: las
+// imágenes son un plus, nunca un punto de fallo.
+
+// Qué imagen corresponde a cada módulo de intención. El nombre es el del archivo
+// dentro de media/ (sin depender de la extensión: rutaImagen prueba varias).
+const IMAGEN_POR_MODULO = {
+  servicios: "servicios",
+  politicas: "politicas",
+  identidad: "nosotros",
+  contacto:  "contacto",
+  faqs:      "faqs",
+  alcance:   "servicios",
+};
+const IMAGEN_BIENVENIDA = "bienvenida";
+const EXTENSIONES_IMG = [".jpg", ".jpeg", ".png", ".webp"];
+
+/**
+ * Devuelve la ruta absoluta de una imagen de media/ si existe (probando las
+ * extensiones comunes), o null si no hay archivo. Cachea el resultado para no
+ * tocar el disco en cada mensaje.
+ */
+const _cacheRutaImg = new Map();
+function rutaImagen(nombre) {
+  if (!nombre) return null;
+  if (_cacheRutaImg.has(nombre)) return _cacheRutaImg.get(nombre);
+  let encontrada = null;
+  for (const ext of EXTENSIONES_IMG) {
+    const ruta = path.join(process.cwd(), CONFIG.MEDIA_FOLDER, nombre + ext);
+    if (fs.existsSync(ruta)) { encontrada = ruta; break; }
+  }
+  _cacheRutaImg.set(nombre, encontrada);
+  return encontrada;
+}
+
+/**
+ * Decide qué imagen (si alguna) acompaña a una respuesta de la IA, a partir del
+ * mensaje del usuario. Devuelve el nombre de archivo o null.
+ */
+function imagenParaMensaje(textoUsuario) {
+  if (!CONFIG.ENVIAR_IMAGENES) return null;
+  const modulos = detectarModulos(textoUsuario);
+  for (const m of modulos) {
+    const img = IMAGEN_POR_MODULO[m];
+    if (img && rutaImagen(img)) return img;
+  }
+  return null;
+}
+
 /**
  * Compila el PROMPT BASE ligero: identidad mínima + índice de temas + reglas.
  * No incluye el detalle de servicios, políticas ni FAQ: esos llegan por módulo.
@@ -611,12 +708,18 @@ Contacto: ${empresa.telefono || ""} | ${empresa.email || ""}${ciudad ? `\nCiudad
 Dispones de información detallada sobre estos temas: ${temas}. Cuando el mensaje incluya un bloque rotulado "CONTEXTO:", trátalo como la fuente de verdad y responde a partir de él. Si el usuario pregunta por un tema del que no recibiste contexto, respóndele con lo que sepas y, si hace falta el detalle, ofrécele comunicar con un asesor.
 
 Instrucciones:
-- Responde siempre en español, de forma amable, concisa y profesional.
+- Responde siempre en español, de forma amable y profesional.
 - No inventes información que no esté en el contexto.
 - ${reserva}
+- Ajusta la longitud a la pregunta: si es simple (un saludo, un dato puntual, un
+  sí/no), responde en 1-2 frases; si el usuario pide detalles, comparaciones o
+  varias cosas a la vez, extiéndete lo necesario para responder completo, sin
+  cortar la información. No rellenes ni repitas para alargar.
+- Usa el formato de WhatsApp para que el mensaje se lea ordenado: *negrita* para
+  lo importante (nombres, precios, títulos), _cursiva_ para matices, y viñetas
+  con "- " cuando enumeres. NO uses Markdown (**dobles asteriscos**, ##, etc.).
 - Usa emojis con moderación para hacer la conversación más amigable.
-- Si el usuario saluda, salúdalo de vuelta presentándote como asistente de ${nombre}.
-- Máximo 3 párrafos por respuesta para ser conciso en WhatsApp.`;
+- Si el usuario saluda, salúdalo de vuelta presentándote como asistente de ${nombre}.`;
 }
 
 // Caché del prompt base, del modelo y de cada módulo de contexto.
@@ -750,12 +853,103 @@ async function consultarIA(preguntaUsuario, historialGemini = []) {
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ─── Formato de texto para WhatsApp ──────────────────────────────────────────
+//
+// Gemini suele devolver Markdown (**negrita**, ## títulos, tablas...), pero
+// WhatsApp usa su propio formato: *negrita*, _cursiva_, ~tachado~, ```mono```.
+// Si se envía el Markdown tal cual, el usuario ve "**Texto**" con los asteriscos
+// a la vista. Esta función traduce Markdown → formato WhatsApp y limpia lo que
+// WhatsApp no soporta, para que el mensaje se vea pegado y ordenado.
+//
+// Es una función pura (texto → texto), sin efectos, para poder probarla aislada.
+function formatearParaWhatsApp(texto) {
+  if (!texto) return "";
+  let t = String(texto);
+
+  // 1. Proteger los bloques de código ``` ``` para no tocar su interior.
+  const bloques = [];
+  t = t.replace(/```[\s\S]*?```/g, (m) => {
+    bloques.push(m);
+    return `\u0000B${bloques.length - 1}\u0000`;
+  });
+  // Proteger también el código en línea `así`.
+  const inline = [];
+  t = t.replace(/`[^`\n]+`/g, (m) => {
+    inline.push(m);
+    return `\u0000I${inline.length - 1}\u0000`;
+  });
+
+  // 2. Viñetas Markdown al inicio de línea (*, +, -) → "• ". Se hace ANTES de
+  //    negrita/cursiva para que el "*" de una viñeta no se confunda con formato.
+  t = t.replace(/^\s*[*+-]\s+/gm, "• ");
+
+  // 3. Marcador temporal de negrita: protege lo que será *negrita* para que el
+  //    paso de cursiva (*x* → _x_) no lo estropee. Títulos y **negrita** se
+  //    guardan aquí y se restauran al final como *texto* de WhatsApp.
+  const negritas = [];
+  const guardarNegrita = (txt) => {
+    negritas.push(txt.trim());
+    return `\u0000N${negritas.length - 1}\u0000`;
+  };
+
+  // 3a. Encabezados Markdown (#, ##, ###) → negrita (vía marcador).
+  t = t.replace(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm, (_, txt) => guardarNegrita(txt));
+
+  // 4. Negrita Markdown **texto** y __texto__ → marcador de negrita.
+  t = t.replace(/\*\*(.+?)\*\*/gs, (_, x) => guardarNegrita(x));
+  t = t.replace(/__(.+?)__/gs, (_, x) => guardarNegrita(x));
+  //    *texto* que quede (cursiva Markdown) → _texto_ (cursiva WhatsApp).
+  t = t.replace(/(^|[^*\w])\*([^*\n]+?)\*(?!\*)/g, "$1_$2_");
+  //    Restaurar la negrita con la sintaxis de WhatsApp: *texto*.
+  t = t.replace(/\u0000N(\d+)\u0000/g, (_, i) => `*${negritas[+i]}*`);
+  //    _texto_ de Markdown ya coincide con WhatsApp: se deja igual.
+
+  // 5. Tachado ~~texto~~ → ~texto~
+  t = t.replace(/~~(.+?)~~/gs, "~$1~");
+
+  // 6. Enlaces [texto](url) → "texto (url)"; WhatsApp no soporta enlaces con
+  //    máscara, así que se muestra la URL para que sea clicable.
+  t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1 ($2)");
+
+  // 7. Citas Markdown "> " → se conservan (WhatsApp también usa "> " para citar).
+
+  // 8. Compactar tres o más saltos de línea a máximo dos (párrafos legibles).
+  t = t.replace(/\n{3,}/g, "\n\n");
+
+  // 9. Restaurar el código protegido, con la sintaxis de WhatsApp (``` y `).
+  t = t.replace(/\u0000I(\d+)\u0000/g, (_, i) => inline[+i]);
+  t = t.replace(/\u0000B(\d+)\u0000/g, (_, i) => bloques[+i]);
+
+  return t.trim();
+}
+
 async function send(sock, jid, text) {
   try {
-    await sock.sendMessage(jid, { text: String(text) });
+    await sock.sendMessage(jid, { text: formatearParaWhatsApp(text) });
   } catch (err) {
     console.error("❌ Error enviando mensaje:", err.message);
   }
+}
+
+/**
+ * Envía un mensaje acompañado de una imagen de la empresa (si existe el archivo).
+ * El texto se formatea igual que en send() y va como pie de la imagen (caption).
+ * Si la imagen no existe, cae con elegancia a un envío de solo texto, de modo que
+ * el bot nunca falla por una imagen ausente.
+ */
+async function sendConImagen(sock, jid, text, nombreImagen) {
+  const caption = formatearParaWhatsApp(text);
+  try {
+    const ruta = rutaImagen(nombreImagen);
+    if (ruta) {
+      await sock.sendMessage(jid, { image: { url: ruta }, caption });
+      return;
+    }
+  } catch (err) {
+    console.error(`⚠️  No se pudo enviar la imagen "${nombreImagen}":`, err.message);
+  }
+  // Sin imagen disponible: se envía solo el texto.
+  await send(sock, jid, text);
 }
 
 async function sendReaccion(sock, jid, key, emoji) {
@@ -1618,7 +1812,15 @@ async function startBot(usarPairingCode, telefonoPairing) {
         const respuestaIA = await consultarIA(textLimpio, historialGemini);
 
         registrarMensaje(jid, "bot", respuestaIA);
-        await send(sock, jid, respuestaIA);
+        // Si el tema del mensaje tiene una imagen asociada en media/, se adjunta;
+        // si no, sendConImagen cae a solo texto. En ambos casos el texto pasa por
+        // el formateador de WhatsApp.
+        const img = imagenParaMensaje(textLimpio);
+        if (img) {
+          await sendConImagen(sock, jid, respuestaIA, img);
+        } else {
+          await send(sock, jid, respuestaIA);
+        }
         await sock.sendPresenceUpdate("paused", jid);
       }
     }

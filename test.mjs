@@ -19,6 +19,7 @@ const modulo =
   `\nexport { clasificarErrorGemini, buildGeminiHistory, construirSystemPrompt,
             detectarModulos, construirContextoTurno, COMPILAR_MODULO,
             construirGenerationConfig, CONFIG,
+            formatearParaWhatsApp, imagenParaMensaje, rutaImagen,
             esFueraHorario, guardarJSON, VERSION, empresa, recargarEmpresa };\n`;
 
 const tmp = path.join(dir, "__test_modulo.mjs");
@@ -169,6 +170,55 @@ const err400 = Object.assign(
 eq("400 'invalid argument' → modelo (no transitorio)", m.clasificarErrorGemini(err400), "modelo");
 eq("400 sin status, solo texto → modelo",
    m.clasificarErrorGemini(new Error("[400 Bad Request] Request contains an invalid argument.")), "modelo");
+
+// ── 8. formatearParaWhatsApp — Markdown → formato nativo de WhatsApp ─────────
+console.log("\n8. formatearParaWhatsApp — que el texto no llegue 'mal pegado'");
+const fmt = m.formatearParaWhatsApp;
+eq("**negrita** → *negrita*", fmt("Hola **mundo**"), "Hola *mundo*");
+eq("__negrita__ → *negrita*", fmt("Hola __mundo__"), "Hola *mundo*");
+eq("*cursiva* de Markdown → _cursiva_", fmt("es *importante* esto"), "es _importante_ esto");
+eq("~~tachado~~ → ~tachado~", fmt("precio ~~viejo~~"), "precio ~viejo~");
+eq("## Título → *Título*", fmt("## Servicios"), "*Servicios*");
+eq("### Título → *Título*", fmt("### Precios 2026"), "*Precios 2026*");
+eq("viñeta '* ' → '• '", fmt("* uno\n* dos"), "• uno\n• dos");
+eq("viñeta '- ' → '• '", fmt("- uno\n- dos"), "• uno\n• dos");
+eq("enlace [t](url) → t (url)", fmt("[web](https://x.co)"), "web (https://x.co)");
+que("no deja ** dobles asteriscos", !fmt("**a** y **b**").includes("**"));
+que("no deja ## de Markdown", !fmt("## H").includes("#"));
+que("negrita+cursiva combinadas", fmt("**Precio:** *desde* COP 100") === "*Precio:* _desde_ COP 100");
+que("respeta código en línea `x`", fmt("usa `!menu` aquí").includes("`!menu`"));
+que("bloque de código se conserva", fmt("```\ncode()\n```").includes("code()"));
+que("no rompe texto sin formato", fmt("Hola, ¿cómo estás?") === "Hola, ¿cómo estás?");
+que("compacta saltos triples", !fmt("a\n\n\n\nb").includes("\n\n\n"));
+que("cadena vacía → vacía", fmt("") === "");
+eq("viñeta con negrita: '* **X**: y' → '• *X*: y'",
+   fmt("* **Diagnóstico**: desde COP 890.000"), "• *Diagnóstico*: desde COP 890.000");
+que("viñeta con negrita no deja '_' de cursiva al inicio",
+   !fmt("* **Servicio**: detalle").startsWith("_"));
+
+// ── 9. Imágenes por intención ────────────────────────────────────────────────
+console.log("\n9. imagenParaMensaje — imagen según el tema (si existe en media/)");
+que("con imágenes activadas, 'precios' pide imagen de servicios",
+    m.CONFIG.ENVIAR_IMAGENES ? m.imagenParaMensaje("¿cuánto cuesta?") === "servicios" : true);
+que("un saludo no pide imagen", m.imagenParaMensaje("hola") === null);
+const flag = m.CONFIG.ENVIAR_IMAGENES;
+m.CONFIG.ENVIAR_IMAGENES = false;
+que("con ENVIAR_IMAGENES=false, nunca pide imagen", m.imagenParaMensaje("¿precios?") === null);
+m.CONFIG.ENVIAR_IMAGENES = flag;
+que("rutaImagen('servicios') encuentra el archivo en media/", !!m.rutaImagen("servicios"));
+que("rutaImagen de algo inexistente → null", m.rutaImagen("no_existe_xyz") === null);
+
+// ── 10. empresa.json enriquecido ─────────────────────────────────────────────
+console.log("\n10. Empresa más completa (sin perder estructura)");
+que("catálogo con beneficios", m.empresa.catalogo.every((s) => Array.isArray(s.beneficios)));
+que("al menos 13 FAQ", m.empresa.faqs.length >= 13);
+que("hay casos de éxito", Array.isArray(m.empresa.casos_exito) && m.empresa.casos_exito.length >= 3);
+que("hay testimonios", Array.isArray(m.empresa.testimonios) && m.empresa.testimonios.length >= 2);
+que("hay diferenciadores", Array.isArray(m.empresa.por_que_nosotros));
+que("el módulo servicios incluye beneficios", m.COMPILAR_MODULO.servicios(m.empresa).includes("Beneficios"));
+que("el módulo identidad incluye casos de éxito", m.COMPILAR_MODULO.identidad(m.empresa).includes("Casos de éxito"));
+que("info interna sigue sin exponerse (organigrama)",
+    !m.COMPILAR_MODULO.identidad(m.empresa).includes(m.empresa.organizacion.organigrama));
 
 fs.unlinkSync(tmp);
 console.log(`\n${"─".repeat(46)}\nRESULTADO: ${ok} correctas, ${fail} fallidas\n`);

@@ -1,4 +1,4 @@
-# 🤖 WhatsApp Bot Empresarial v3.4.4
+# 🤖 WhatsApp Bot Empresarial v3.5.0
 
 Bot de WhatsApp con IA (Google Gemini), comandos empresariales y un perfil de empresa simulada completo.
 
@@ -6,7 +6,43 @@ Arquitectura de un solo archivo (`index.js`) sobre Baileys v7 + `@google/generat
 
 ---
 
-## 🤖 Modelo activo: Gemini 3.5 Flash-Lite (v3.4.4)
+## ✨ Novedades v3.5.0 (respuestas ricas)
+
+**Longitud adaptativa.** Se elimina el tope de "3 párrafos". El bot responde
+corto para preguntas simples (un saludo, un dato, un sí/no) y se extiende cuando
+el usuario pide detalles o compara varias cosas. `MAX_TOKENS_RESPUESTA` sube a
+4096 para no cortar respuestas largas.
+
+**Formato WhatsApp automático.** Gemini devuelve Markdown (`**negrita**`, `##`,
+`[texto](url)`), pero WhatsApp usa otro formato. `formatearParaWhatsApp()`
+traduce todo al formato nativo para que el texto NO llegue con asteriscos dobles
+ni se vea "mal pegado":
+
+| Gemini (Markdown) | WhatsApp |
+|---|---|
+| `**negrita**` / `__negrita__` | `*negrita*` |
+| `*cursiva*` | `_cursiva_` |
+| `~~tachado~~` | `~tachado~` |
+| `## Título` | `*Título*` |
+| `* item` / `- item` | `• item` |
+| `[web](https://x.co)` | `web (https://x.co)` |
+
+Los bloques de código ``` ``` y `` `en línea` `` se preservan tal cual.
+
+**Imágenes de la empresa.** La carpeta `media/` contiene una imagen por tema
+(servicios, políticas, nosotros, contacto, faqs, bienvenida). El bot adjunta la
+que corresponde a la intención del mensaje. Son **placeholders**: reemplázalos
+por los reales (mismo nombre de archivo). Si falta un archivo, el bot responde
+con solo texto — nunca falla. Para desactivarlas: `ENVIAR_IMAGENES: false`.
+Ver `media/LEEME.txt`.
+
+**Empresa más completa.** `empresa.json` suma beneficios por servicio, 13 FAQ,
+casos de éxito, testimonios y diferenciadores. La información interna
+(organigrama, procesos, indicadores) sigue sin exponerse al cliente.
+
+---
+
+## 🤖 Modelo activo: Gemini 3.5 Flash-Lite
 
 El bot usa **`gemini-3.5-flash-lite`**, el modelo más rápido y económico de la
 serie 3.5 de Google (GA, listo para producción), ideal para un bot de atención
@@ -14,8 +50,8 @@ de alto volumen y baja latencia.
 
 Es de la familia 3.x, que "piensa" por defecto. Por eso:
 - `thinkingConfig` **no se envía** (evita el 400 de la v3.4.2).
-- `MAX_TOKENS_RESPUESTA` es 1200, con holgura para que el pensamiento no corte
-  la respuesta. Flash-Lite solo cobra los tokens generados, no el tope.
+- `MAX_TOKENS_RESPUESTA` es 4096 (v3.5.0), sin tope rígido de longitud.
+  Flash-Lite solo cobra los tokens generados, no el tope.
 
 Para cambiar de modelo, edita `CONFIG.GEMINI_MODEL` (`index.js`). Si algún día da
 404 por jubilación, `node listar-modelos.mjs` lista los disponibles con tu clave.
@@ -117,7 +153,7 @@ Todo se controla desde `construirSystemPrompt()`, `COMPILAR_MODULO` e `INTENCION
 ```bash
 npm install
 npm start      # menú interactivo: API Key → método de conexión
-npm test       # 56 verificaciones sobre las funciones críticas
+npm test       # 88 verificaciones sobre las funciones críticas
 ```
 
 Requiere Node.js ≥ 18 (probado en 22). La API Key de Gemini se obtiene gratis en
@@ -270,7 +306,7 @@ de WhatsApp contaban como la misma persona, y cambiar el nombre permitía votar 
 
 ## 🧪 Pruebas
 
-`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 56 verificaciones:
+`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 88 verificaciones:
 
 - **`clasificarErrorGemini`** (10): incluida la regresión del Bug 1 — un 403 que menciona cuota debe
   clasificarse como `cuota` y **no** descartar la clave.
@@ -298,7 +334,7 @@ auth_info_baileys/    Sesión de WhatsApp (se genera sola; ignorada por git)
 
 ## 🧪 Pruebas de la optimización
 
-`npm test` ejecuta 56 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
+`npm test` ejecuta 88 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
 `detectarModulos` acierta en saludos, precio, pago, confidencialidad, identidad, contacto, alcance y
 consultas mixtas; el contexto del turno trae solo lo pedido; y **ningún** módulo expone el organigrama,
 los cargos, los indicadores ni los planes de crecimiento.
