@@ -1,6 +1,14 @@
 /**
- * WhatsApp Bot Empresarial — v3.5.2 (GEMINI EDITION)
+ * WhatsApp Bot Empresarial — v3.5.3 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
+ * Cambios v3.5.3 (fix "sin conexión activa"; sin cambios de arquitectura):
+ * 🔧 El bot recibía mensajes pero respondía "Envío omitido: sin conexión activa".
+ *    Causa: estaConectado() comprobaba sock.ws.readyState === 1, pero en Baileys
+ *    v7 sock.ws es un wrapper cuyo readyState no expone ese valor, y además se
+ *    exigía sock.user (no siempre presente). Ahora el estado se rastrea con la
+ *    variable conexionAbierta, actualizada por connection.update ("open"/"close"),
+ *    que es la fuente de verdad recomendada por Baileys.
+ *
  * Cambios v3.5.2 (formato y sesión; sin cambios de arquitectura):
  * ✨ Triple asterisco: ***texto*** y ___texto___ (negrita+cursiva de Markdown)
  *    ahora se convierten a *texto* (negrita de WhatsApp), sin dejar asteriscos
@@ -169,7 +177,7 @@ const qrcode = require("qrcode-terminal");
 // Única fuente de verdad de la versión: debe coincidir con package.json.
 // Antes estaba escrita a mano en la cabecera, en el menú de inicio y en el
 // README, y las tres se habían desincronizado.
-const VERSION = "3.5.2";
+const VERSION = "3.5.3";
 
 const CONFIG = {
   // IA — Google Gemini
@@ -1085,15 +1093,20 @@ function formatearParaWhatsApp(texto) {
   return t.trim();
 }
 
-// Estado de la conexión del socket. Baileys expone sock.ws.readyState (1 = OPEN)
-// y sock.user (definido tras autenticar). Comprobarlo antes de enviar evita el
-// Boom 428 "Connection Closed" que se produce al escribir sobre un socket muerto.
+// Estado de la conexión. Fuente de verdad: la variable conexionAbierta, que se
+// actualiza en connection.update ("open"/"close"), tal como recomienda Baileys.
+//
+// El intento anterior (sock.ws?.readyState === 1) daba falsos "sin conexión" en
+// Baileys v7: sock.ws es un wrapper cuyo readyState no siempre expone el 1, y
+// exigir sock.user fallaba en ventanas del ciclo de conexión. Resultado: el bot
+// recibía mensajes pero se negaba a responder ("Envío omitido: sin conexión").
+//
+// Ahora solo se bloquea el envío si SABEMOS que la conexión está cerrada. Ante
+// la duda se intenta enviar: si el socket estuviera muerto, el try/catch de
+// send() captura el error sin tumbar el bot (esa red de seguridad ya existe).
 function estaConectado(sock) {
-  try {
-    return !!sock && !!sock.user && sock.ws?.readyState === 1;
-  } catch (_) {
-    return false;
-  }
+  if (!sock) return false;
+  return conexionAbierta;
 }
 
 async function send(sock, jid, text) {
@@ -1835,6 +1848,10 @@ async function menuInicio() {
 
 let reconnectAttempts = 0;
 let activeSock        = null; // referencia global para el cierre limpio
+// Estado de la conexión, actualizado por connection.update. Es la fuente de
+// verdad recomendada por Baileys: más fiable que inspeccionar sock.ws.readyState,
+// cuyo formato cambió entre versiones y provocaba falsos "sin conexión".
+let conexionAbierta   = false;
 
 async function startBot(usarPairingCode, telefonoPairing) {
   // Auth state que guarda SOLO creds.json (+ respaldo) en AUTH_FOLDER y las
@@ -1912,6 +1929,7 @@ async function startBot(usarPairingCode, telefonoPairing) {
     }
 
     if (connection === "close") {
+      conexionAbierta = false;
       const statusCode = lastDisconnect?.error instanceof Boom
         ? lastDisconnect.error.output.statusCode
         : null;
@@ -1919,7 +1937,7 @@ async function startBot(usarPairingCode, telefonoPairing) {
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
       if (!shouldReconnect) {
-        console.log("\n⛔ Sesión cerrada (logout). Borra la carpeta auth_info_baileys/ y reinicia el bot.");
+        console.log(`\n⛔ Sesión cerrada (logout). Borra la carpeta ${CONFIG.AUTH_FOLDER}/ y reinicia el bot.`);
         cerrarRL();
         process.exit(0);
       } else if (reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
@@ -1936,6 +1954,7 @@ async function startBot(usarPairingCode, telefonoPairing) {
     }
 
     if (connection === "open") {
+      conexionAbierta = true;
       reconnectAttempts = 0;
       cerrarRL();
       console.log("✅ ¡Conectado a WhatsApp exitosamente!\n");

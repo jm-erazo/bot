@@ -1,8 +1,19 @@
-# 🤖 WhatsApp Bot Empresarial v3.5.2
+# 🤖 WhatsApp Bot Empresarial v3.5.3
 
 Bot de WhatsApp con IA (Google Gemini), comandos empresariales y un perfil de empresa simulada completo.
 
 Arquitectura de un solo archivo (`index.js`) sobre Baileys v7 + `@google/generative-ai`, con persistencia en JSON. La v3.4 **no cambia la arquitectura**: reduce el consumo de tokens cargando el contexto de la empresa bajo demanda.
+
+---
+
+## 🔌 Fix "sin conexión activa" v3.5.3
+
+Un bug introducido al blindar los envíos hacía que el bot recibiera mensajes
+pero respondiera *"Envío omitido: sin conexión activa"*. La comprobación
+`sock.ws.readyState === 1` no funciona en Baileys v7 (su `sock.ws` es un wrapper
+cuyo `readyState` no expone ese valor). Ahora el estado de conexión se rastrea
+con la variable `conexionAbierta`, que `connection.update` pone en `true`/`false`
+según los eventos `open`/`close` — el método recomendado por Baileys.
 
 ---
 
@@ -194,7 +205,7 @@ Todo se controla desde `construirSystemPrompt()`, `COMPILAR_MODULO` e `INTENCION
 ```bash
 npm install
 npm start      # menú interactivo: API Key → método de conexión
-npm test       # 106 verificaciones sobre las funciones críticas
+npm test       # 104 verificaciones sobre las funciones críticas
 ```
 
 Requiere Node.js ≥ 18 (probado en 22). La API Key de Gemini se obtiene gratis en
@@ -347,7 +358,7 @@ de WhatsApp contaban como la misma persona, y cambiar el nombre permitía votar 
 
 ## 🧪 Pruebas
 
-`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 106 verificaciones:
+`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 104 verificaciones:
 
 - **`clasificarErrorGemini`** (10): incluida la regresión del Bug 1 — un 403 que menciona cuota debe
   clasificarse como `cuota` y **no** descartar la clave.
@@ -375,7 +386,7 @@ auth_info_baileys/    Sesión de WhatsApp (se genera sola; ignorada por git)
 
 ## 🧪 Pruebas de la optimización
 
-`npm test` ejecuta 106 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
+`npm test` ejecuta 104 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
 `detectarModulos` acierta en saludos, precio, pago, confidencialidad, identidad, contacto, alcance y
 consultas mixtas; el contexto del turno trae solo lo pedido; y **ningún** módulo expone el organigrama,
 los cargos, los indicadores ni los planes de crecimiento.
