@@ -20,6 +20,7 @@ const modulo =
             detectarModulos, construirContextoTurno, COMPILAR_MODULO,
             construirGenerationConfig, CONFIG,
             formatearParaWhatsApp, imagenParaMensaje, rutaImagen,
+            estaConectado, jsonValido, useAuthStateSeparado,
             esFueraHorario, guardarJSON, VERSION, empresa, recargarEmpresa };\n`;
 
 const tmp = path.join(dir, "__test_modulo.mjs");
@@ -175,6 +176,9 @@ eq("400 sin status, solo texto → modelo",
 console.log("\n8. formatearParaWhatsApp — que el texto no llegue 'mal pegado'");
 const fmt = m.formatearParaWhatsApp;
 eq("**negrita** → *negrita*", fmt("Hola **mundo**"), "Hola *mundo*");
+eq("***negrita+cursiva*** → *negrita*", fmt("Mira ***esto***"), "Mira *esto*");
+eq("___triple___ → *negrita*", fmt("Mira ___esto___"), "Mira *esto*");
+que("*** no deja asteriscos sueltos", !/\*\*/.test(fmt("un ***título*** aquí")));
 eq("__negrita__ → *negrita*", fmt("Hola __mundo__"), "Hola *mundo*");
 eq("*cursiva* de Markdown → _cursiva_", fmt("es *importante* esto"), "es _importante_ esto");
 eq("~~tachado~~ → ~tachado~", fmt("precio ~~viejo~~"), "precio ~viejo~");
@@ -219,6 +223,58 @@ que("el módulo servicios incluye beneficios", m.COMPILAR_MODULO.servicios(m.emp
 que("el módulo identidad incluye casos de éxito", m.COMPILAR_MODULO.identidad(m.empresa).includes("Casos de éxito"));
 que("info interna sigue sin exponerse (organigrama)",
     !m.COMPILAR_MODULO.identidad(m.empresa).includes(m.empresa.organizacion.organigrama));
+
+// ── 11. Estabilidad y sesión (v3.5.1) ───────────────────────────────────────
+console.log("\n11. Estabilidad: envíos y sesión a prueba de fallos");
+que("estaConectado: null → false", m.estaConectado(null) === false);
+que("estaConectado: socket sin user → false",
+    m.estaConectado({ ws: { readyState: 1 } }) === false);
+que("estaConectado: socket cerrado (readyState≠1) → false",
+    m.estaConectado({ user: {}, ws: { readyState: 3 } }) === false);
+que("estaConectado: socket abierto y con user → true",
+    m.estaConectado({ user: { id: "x" }, ws: { readyState: 1 } }) === true);
+const okJson  = path.join(dir, "__ok.json");
+const malJson = path.join(dir, "__mal.json");
+fs.writeFileSync(okJson, JSON.stringify({ noiseKey: "abc", registered: true }));
+fs.writeFileSync(malJson, '{"truncado": ');  // como un corte a media escritura
+que("jsonValido: creds íntegro → true", m.jsonValido(okJson) === true);
+que("jsonValido: creds truncado → false", m.jsonValido(malJson) === false);
+que("jsonValido: archivo inexistente → false", m.jsonValido(path.join(dir, "__nope.json")) === false);
+fs.unlinkSync(okJson); fs.unlinkSync(malJson);
+
+// ── 12. Sesión: creds separadas de las claves (v3.5.2) ───────────────────────
+console.log("\n12. Auth: creds.json aislado, claves en keys/");
+const authOrig = m.CONFIG.AUTH_FOLDER;
+m.CONFIG.AUTH_FOLDER = "auth_test_" + Date.now();
+const authDir = path.join(dir, m.CONFIG.AUTH_FOLDER);
+// dir es el cwd del test (bot-main); useAuthStateSeparado usa process.cwd()
+const realDir = path.join(process.cwd(), m.CONFIG.AUTH_FOLDER);
+try {
+  const { state, saveCreds } = await m.useAuthStateSeparado();
+  que("state.creds tiene noiseKey (initAuthCreds)", !!state.creds?.noiseKey);
+  await saveCreds();
+  que("creds.json existe en la raíz de la carpeta auth",
+      fs.existsSync(path.join(realDir, "creds.json")));
+  que("creds.json.bak (respaldo) existe", fs.existsSync(path.join(realDir, "creds.json.bak")));
+  que("subcarpeta keys/ existe", fs.existsSync(path.join(realDir, "keys")));
+  // Guardar una clave y comprobar que va a keys/, no a la raíz
+  state.keys.set({ "pre-key": { "1": { public: Buffer.from("abc"), private: Buffer.from("def") } } });
+  const archivosRaiz = fs.readdirSync(realDir).filter((f) => !fs.statSync(path.join(realDir, f)).isDirectory());
+  que("la raíz SOLO contiene creds.json y creds.json.bak",
+      archivosRaiz.sort().join(",") === "creds.json,creds.json.bak");
+  que("la clave de sesión se guardó dentro de keys/",
+      fs.readdirSync(path.join(realDir, "keys")).some((f) => f.includes("pre-key")));
+  const leida = state.keys.get("pre-key", ["1"]);
+  que("la clave se lee de vuelta como Buffer", Buffer.isBuffer(leida["1"]?.public));
+  // Recuperación ante corrupción
+  fs.writeFileSync(path.join(realDir, "creds.json"), '{"truncado":');
+  await m.useAuthStateSeparado();
+  que("creds.json corrupto se restaura desde el respaldo",
+      m.jsonValido(path.join(realDir, "creds.json")));
+} finally {
+  fs.rmSync(realDir, { recursive: true, force: true });
+  m.CONFIG.AUTH_FOLDER = authOrig;
+}
 
 fs.unlinkSync(tmp);
 console.log(`\n${"─".repeat(46)}\nRESULTADO: ${ok} correctas, ${fail} fallidas\n`);

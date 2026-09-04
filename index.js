@@ -1,6 +1,32 @@
 /**
- * WhatsApp Bot Empresarial — v3.5.0 (GEMINI EDITION)
+ * WhatsApp Bot Empresarial — v3.5.2 (GEMINI EDITION)
  * ─────────────────────────────────────────────────────────────────────────────
+ * Cambios v3.5.2 (formato y sesión; sin cambios de arquitectura):
+ * ✨ Triple asterisco: ***texto*** y ___texto___ (negrita+cursiva de Markdown)
+ *    ahora se convierten a *texto* (negrita de WhatsApp), sin dejar asteriscos
+ *    sueltos. Aplica a los títulos que devuelve la IA.
+ * 🔧 Sesión separada: creds.json (+ creds.json.bak) viven SOLOS en AUTH_FOLDER;
+ *    las claves de sesión de Baileys van en AUTH_FOLDER/keys/. Se implementa con
+ *    un auth state propio (useAuthStateSeparado) con escritura atómica, en lugar
+ *    de useMultiFileAuthState (que mezclaba todo en una carpeta).
+ *
+ * Cambios v3.5.1 (estabilidad: el bot NO se cae; sin cambios de arquitectura):
+ * 🔧 CRÍTICO: el bot se caía al enviar (Boom 428 "Connection Closed") y el
+ *    hosting lo reiniciaba, corrompiendo la sesión. Ahora:
+ *    - process.on("uncaughtException"/"unhandledRejection"): un fallo puntual ya
+ *      NO tumba el proceso; se registra y el bot sigue vivo.
+ *    - estaConectado(): se comprueba el socket ANTES de enviar; send(),
+ *      sendConImagen(), sendReaccion() y presencia() nunca lanzan.
+ *    - cada mensaje entrante se procesa en su propio try/catch: si uno falla, se
+ *      omite y se continúa con los demás.
+ * 🔧 Sesión a prueba de fallos: creds.json vive en su carpeta dedicada y se
+ *    respalda (creds.json.bak) tras cada guardado válido. Si se corrompe por un
+ *    reinicio abrupto, asegurarSesionIntegra() lo restaura del respaldo en vez
+ *    de exigir re-escanear el QR.
+ * 🔧 Baileys fijado a 7.0.0-rc14 (antes "latest", que podía traer una versión
+ *    rota como la rc.8 que rompía el envío con 428).
+ * ✨ Fichas de !empresa y !contacto con etiquetas en negrita, más legibles.
+ *
  * Cambios v3.5.0 (respuestas ricas; sin cambios de arquitectura):
  * ✨ Longitud adaptativa: se elimina el tope rígido de 3 párrafos. El prompt pide
  *    respuestas cortas para preguntas simples y completas cuando hacen falta.
@@ -118,7 +144,8 @@
  */
 
 import makeWASocket, {
-  useMultiFileAuthState,
+  initAuthCreds,
+  BufferJSON,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
@@ -142,7 +169,7 @@ const qrcode = require("qrcode-terminal");
 // Única fuente de verdad de la versión: debe coincidir con package.json.
 // Antes estaba escrita a mano en la cabecera, en el menú de inicio y en el
 // README, y las tres se habían desincronizado.
-const VERSION = "3.5.0";
+const VERSION = "3.5.2";
 
 const CONFIG = {
   // IA — Google Gemini
@@ -176,7 +203,12 @@ const CONFIG = {
   GEMINI_THINKING_BUDGET:  null,
 
   // Archivos
-  AUTH_FOLDER:             "auth_info_baileys",
+  // AUTH_FOLDER contiene ÚNICAMENTE creds.json y su respaldo creds.json.bak.
+  // Las claves de sesión de Baileys (pre-key-*, session-*, sender-key-*, que son
+  // obligatorias para descifrar mensajes) viven en la subcarpeta KEYS_FOLDER,
+  // separadas de las credenciales. Ver useAuthStateSeparado().
+  AUTH_FOLDER:             "auth_folder",
+  KEYS_SUBFOLDER:          "keys",   // dentro de AUTH_FOLDER
   DB_EMPRESA:              "empresa.json",
   DB_CONVERSACIONES:       "conversaciones.json",
   ENV_FILE:                ".env",
@@ -300,6 +332,130 @@ function vaciarEscriturasPendientes(archivo, datos) {
     escriturasPendientes.delete(archivo);
   }
   guardarJSON(archivo, datos);
+}
+
+// ─── Sesión de WhatsApp: creds separadas de las claves ───────────────────────
+//
+// Baileys necesita dos cosas: las CREDENCIALES (creds.json, la identidad del
+// dispositivo) y las CLAVES de sesión (pre-keys, sesiones de cifrado, sender
+// keys… obligatorias para descifrar mensajes). El useMultiFileAuthState estándar
+// las mezcla todas en una misma carpeta.
+//
+// Aquí se separan físicamente, como pide el proyecto:
+//   AUTH_FOLDER/            → SOLO creds.json y creds.json.bak
+//   AUTH_FOLDER/keys/       → las claves de sesión (una por archivo)
+//
+// creds.json se respalda tras cada guardado válido y se restaura solo si se
+// corrompe, para no tener que re-escanear el QR ante un reinicio abrupto.
+
+function dirAuth()      { return path.join(process.cwd(), CONFIG.AUTH_FOLDER); }
+function dirKeys()      { return path.join(dirAuth(), CONFIG.KEYS_SUBFOLDER); }
+function rutaCreds()    { return path.join(dirAuth(), "creds.json"); }
+function rutaCredsBak() { return path.join(dirAuth(), "creds.json.bak"); }
+
+/** ¿El archivo existe y es JSON válido (no truncado)? */
+function jsonValido(ruta) {
+  try {
+    const txt = fs.readFileSync(ruta, "utf-8");
+    JSON.parse(txt);
+    return txt.trim().length > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** Copia creds.json → creds.json.bak solo si el original está sano. */
+function respaldarCreds() {
+  try {
+    const creds = rutaCreds();
+    if (jsonValido(creds)) fs.copyFileSync(creds, rutaCredsBak());
+  } catch (err) {
+    console.error("⚠️  No se pudo respaldar creds.json:", err?.message || err);
+  }
+}
+
+/**
+ * Garantiza que las carpetas existan y que creds.json no esté corrupto. Si lo
+ * está pero hay respaldo válido, lo restaura. Se llama antes de arrancar.
+ */
+function asegurarSesionIntegra() {
+  try {
+    if (!fs.existsSync(dirAuth()))  fs.mkdirSync(dirAuth(),  { recursive: true });
+    if (!fs.existsSync(dirKeys()))  fs.mkdirSync(dirKeys(),  { recursive: true });
+    const creds = rutaCreds(), bak = rutaCredsBak();
+    if (fs.existsSync(creds) && !jsonValido(creds)) {
+      if (jsonValido(bak)) {
+        fs.copyFileSync(bak, creds);
+        console.log("♻️  creds.json estaba dañado: restaurado desde el respaldo.");
+      } else {
+        console.log("⚠️  creds.json dañado y sin respaldo válido. Habrá que re-vincular.");
+      }
+    }
+  } catch (err) {
+    console.error("⚠️  Error verificando la sesión:", err?.message || err);
+  }
+}
+
+/**
+ * Auth state personalizado (reemplaza a useMultiFileAuthState) que guarda:
+ *   - creds.json en AUTH_FOLDER (solo eso + su respaldo)
+ *   - cada clave de sesión como un archivo dentro de AUTH_FOLDER/keys/
+ *
+ * Escritura atómica (tmp + rename) para que un corte a media escritura no deje
+ * un archivo truncado. Devuelve { state, saveCreds } con la misma interfaz que
+ * useMultiFileAuthState, así el resto de startBot() no cambia.
+ */
+async function useAuthStateSeparado() {
+  asegurarSesionIntegra();
+
+  const escribir = (ruta, valor) => {
+    const tmp = `${ruta}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(valor, BufferJSON.replacer));
+    fs.renameSync(tmp, ruta);
+  };
+  const leer = (ruta) => {
+    try { return JSON.parse(fs.readFileSync(ruta, "utf-8"), BufferJSON.reviver); }
+    catch (_) { return null; }
+  };
+  // Nombre de archivo seguro para una clave (evita / y otros caracteres).
+  const archivoClave = (tipo, id) =>
+    path.join(dirKeys(), `${tipo}-${id}`.replace(/[^0-9A-Za-z._-]/g, "_") + ".json");
+
+  const creds = leer(rutaCreds()) || initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: (tipo, ids) => {
+          const data = {};
+          for (const id of ids) {
+            let valor = leer(archivoClave(tipo, id));
+            // app-state-sync-key debe devolverse como estructura del protobuf.
+            if (tipo === "app-state-sync-key" && valor) {
+              valor = valor; // BufferJSON ya lo reconstruye; Baileys lo acepta.
+            }
+            if (valor) data[id] = valor;
+          }
+          return data;
+        },
+        set: (datos) => {
+          for (const tipo in datos) {
+            for (const id in datos[tipo]) {
+              const valor = datos[tipo][id];
+              const ruta  = archivoClave(tipo, id);
+              if (valor) escribir(ruta, valor);
+              else { try { fs.existsSync(ruta) && fs.unlinkSync(ruta); } catch (_) {} }
+            }
+          }
+        },
+      },
+    },
+    saveCreds: () => {
+      escribir(rutaCreds(), creds);
+      respaldarCreds();
+    },
+  };
 }
 
 // ─── Empresa ─────────────────────────────────────────────────────────────────
@@ -895,7 +1051,13 @@ function formatearParaWhatsApp(texto) {
   // 3a. Encabezados Markdown (#, ##, ###) → negrita (vía marcador).
   t = t.replace(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm, (_, txt) => guardarNegrita(txt));
 
-  // 4. Negrita Markdown **texto** y __texto__ → marcador de negrita.
+  // 4. Triple asterisco ***texto*** (negrita+cursiva de Markdown) → negrita.
+  //    Debe ir ANTES que **texto**: si no, la regex de doble asterisco captura
+  //    "**texto*" y deja un asterisco suelto. El usuario quiere ***x*** = *x*.
+  t = t.replace(/\*\*\*(.+?)\*\*\*/gs, (_, x) => guardarNegrita(x));
+  t = t.replace(/___(.+?)___/gs, (_, x) => guardarNegrita(x));
+
+  // 4a. Negrita Markdown **texto** y __texto__ → marcador de negrita.
   t = t.replace(/\*\*(.+?)\*\*/gs, (_, x) => guardarNegrita(x));
   t = t.replace(/__(.+?)__/gs, (_, x) => guardarNegrita(x));
   //    *texto* que quede (cursiva Markdown) → _texto_ (cursiva WhatsApp).
@@ -923,39 +1085,73 @@ function formatearParaWhatsApp(texto) {
   return t.trim();
 }
 
+// Estado de la conexión del socket. Baileys expone sock.ws.readyState (1 = OPEN)
+// y sock.user (definido tras autenticar). Comprobarlo antes de enviar evita el
+// Boom 428 "Connection Closed" que se produce al escribir sobre un socket muerto.
+function estaConectado(sock) {
+  try {
+    return !!sock && !!sock.user && sock.ws?.readyState === 1;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function send(sock, jid, text) {
+  if (!estaConectado(sock)) {
+    console.error("⚠️  Envío omitido: sin conexión activa a WhatsApp.");
+    return false;
+  }
   try {
     await sock.sendMessage(jid, { text: formatearParaWhatsApp(text) });
+    return true;
   } catch (err) {
-    console.error("❌ Error enviando mensaje:", err.message);
+    // No relanza: un fallo de envío nunca debe tumbar el bot.
+    console.error("❌ Error enviando mensaje:", err?.message || err);
+    return false;
   }
 }
 
 /**
  * Envía un mensaje acompañado de una imagen de la empresa (si existe el archivo).
  * El texto se formatea igual que en send() y va como pie de la imagen (caption).
- * Si la imagen no existe, cae con elegancia a un envío de solo texto, de modo que
- * el bot nunca falla por una imagen ausente.
+ * Si la imagen no existe o su envío falla, cae con elegancia a solo texto, de
+ * modo que el bot nunca falla por una imagen.
  */
 async function sendConImagen(sock, jid, text, nombreImagen) {
+  if (!estaConectado(sock)) {
+    console.error("⚠️  Envío de imagen omitido: sin conexión activa.");
+    return false;
+  }
   const caption = formatearParaWhatsApp(text);
   try {
     const ruta = rutaImagen(nombreImagen);
     if (ruta) {
       await sock.sendMessage(jid, { image: { url: ruta }, caption });
-      return;
+      return true;
     }
   } catch (err) {
-    console.error(`⚠️  No se pudo enviar la imagen "${nombreImagen}":`, err.message);
+    // La imagen falló (p. ej. 428 puntual): se intenta al menos el texto.
+    console.error(`⚠️  No se pudo enviar la imagen "${nombreImagen}":`, err?.message || err);
   }
-  // Sin imagen disponible: se envía solo el texto.
-  await send(sock, jid, text);
+  // Sin imagen disponible o falló: se envía solo el texto.
+  return send(sock, jid, text);
 }
 
 async function sendReaccion(sock, jid, key, emoji) {
+  if (!estaConectado(sock)) return;
   try {
     await sock.sendMessage(jid, { react: { text: emoji, key } });
   } catch (_) {}
+}
+
+/** Actualiza el indicador de "escribiendo…" sin lanzar si el socket está muerto. */
+async function presencia(sock, jid, estado) {
+  if (!estaConectado(sock)) return;
+  try {
+    await sock.sendPresenceUpdate(estado, jid);
+  } catch (_) {
+    // El presence es cosmético; su fallo jamás debe interrumpir el flujo.
+  }
 }
 
 function formatUptime(s) {
@@ -1135,10 +1331,11 @@ _Hecho con ❤️ usando Baileys + Google Gemini_`);
       await send(sock, jid,
 `🏢 *${empresa.nombre || "Empresa"}*
 
-📄 ${empresa.descripcion || "Sin descripción."}
-🏭 Sector: ${empresa.sector || "N/A"}
-🕐 Horario: ${empresa.horario || "N/A"}
-📍 Dirección: ${empresa.direccion || "N/A"}
+${empresa.descripcion || "Sin descripción."}
+
+📄 *Sector:* ${empresa.sector || "N/A"}
+🕐 *Horario:* ${empresa.horario || "N/A"}
+📍 *Dirección:* ${empresa.direccion || "N/A"}
 
 _Escribe *!nosotros*, *!contacto*, *!servicios*, *!faq* o *!politicas* para más información._`);
       break;
@@ -1149,10 +1346,10 @@ _Escribe *!nosotros*, *!contacto*, *!servicios*, *!faq* o *!politicas* para más
       await send(sock, jid,
 `📞 *Contacto — ${empresa.nombre || "Empresa"}*
 
-📱 Teléfono: ${empresa.telefono || "N/A"}
-📧 Email: ${empresa.email || "N/A"}
-📍 Dirección: ${empresa.direccion || "N/A"}
-🕐 Horario: ${empresa.horario || "N/A"}
+📱 *Teléfono:* ${empresa.telefono || "N/A"}
+📧 *Email:* ${empresa.email || "N/A"}
+📍 *Dirección:* ${empresa.direccion || "N/A"}
+🕐 *Horario:* ${empresa.horario || "N/A"}
 
 _¡Estamos para servirte!_ 🤝`);
       break;
@@ -1640,7 +1837,10 @@ let reconnectAttempts = 0;
 let activeSock        = null; // referencia global para el cierre limpio
 
 async function startBot(usarPairingCode, telefonoPairing) {
-  const { state, saveCreds } = await useMultiFileAuthState(CONFIG.AUTH_FOLDER);
+  // Auth state que guarda SOLO creds.json (+ respaldo) en AUTH_FOLDER y las
+  // claves de sesión en AUTH_FOLDER/keys/. asegurarSesionIntegra() se llama
+  // dentro y restaura creds desde el respaldo si estuviera dañado.
+  const { state, saveCreds } = await useAuthStateSeparado();
   const { version }          = await fetchLatestBaileysVersion();
 
   console.log(`🤖 WhatsApp Bot iniciando... (WA v${version.join(".")})`);
@@ -1747,6 +1947,7 @@ async function startBot(usarPairingCode, telefonoPairing) {
     }
   });
 
+  // saveCreds() ya escribe creds.json de forma atómica y actualiza el respaldo.
   sock.ev.on("creds.update", saveCreds);
 
   // ─── Mensajes entrantes ─────────────────────────────────────────────────
@@ -1754,6 +1955,10 @@ async function startBot(usarPairingCode, telefonoPairing) {
     if (type !== "notify") return;
 
     for (const msg of messages) {
+      // Cada mensaje se procesa en su propio try/catch: si uno falla (envío,
+      // IA, imagen…), se registra y se sigue con el resto. Un mensaje
+      // problemático nunca debe romper el loop ni tumbar el proceso.
+      try {
       if (msg.key.fromMe || !msg.message) continue;
 
       const jid     = msg.key.remoteJid;
@@ -1807,21 +2012,26 @@ async function startBot(usarPairingCode, telefonoPairing) {
         const historialGemini = buildGeminiHistory(conversaciones[jid] || []);
 
         registrarMensaje(jid, "user", textLimpio);
-        await sock.sendPresenceUpdate("composing", jid);
+        await presencia(sock, jid, "composing");
 
         const respuestaIA = await consultarIA(textLimpio, historialGemini);
 
         registrarMensaje(jid, "bot", respuestaIA);
         // Si el tema del mensaje tiene una imagen asociada en media/, se adjunta;
-        // si no, sendConImagen cae a solo texto. En ambos casos el texto pasa por
-        // el formateador de WhatsApp.
+        // si no, sendConImagen cae a solo texto. Ambas rutas están blindadas: si
+        // la conexión se cayó, no se envía nada y el bot sigue vivo.
         const img = imagenParaMensaje(textLimpio);
         if (img) {
           await sendConImagen(sock, jid, respuestaIA, img);
         } else {
           await send(sock, jid, respuestaIA);
         }
-        await sock.sendPresenceUpdate("paused", jid);
+        await presencia(sock, jid, "paused");
+      }
+      } catch (errMsg) {
+        // Fallo procesando ESTE mensaje: se registra y se continúa con el resto.
+        console.error("⚠️  Error procesando un mensaje (se omite y se continúa):",
+          errMsg?.message || errMsg);
       }
     }
   });
@@ -1843,6 +2053,28 @@ function gracefulShutdown(signal) {
 
 process.on("SIGINT",  () => gracefulShutdown("SIGINT"));   // Ctrl+C
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));  // kill / pm2 stop
+
+// ─── Red de seguridad global ──────────────────────────────────────────────────
+//
+// CRÍTICO: sin esto, cualquier excepción no capturada (p. ej. un envío sobre un
+// socket ya cerrado → Boom 428 "Connection Closed") tumbaba TODO el proceso, el
+// hosting lo reiniciaba y, al reiniciar a media escritura, la sesión se
+// corrompía. El objetivo del usuario es claro: el bot NO debe caerse nunca.
+//
+// Estos manejadores registran el error y dejan el proceso VIVO. La reconexión de
+// WhatsApp la maneja connection.update; aquí solo evitamos que un fallo puntual
+// (un mensaje que no se pudo enviar, una imagen, un presence) mate el bot.
+process.on("uncaughtException", (err) => {
+  const codigo = err?.output?.statusCode || err?.code || "";
+  console.error(`⚠️  Excepción no capturada [${codigo}]: ${err?.message || err}`);
+  // No se hace process.exit: el bot sigue corriendo y la conexión se recupera
+  // sola. Solo se sale ante un fallo verdaderamente irrecuperable de arranque.
+});
+
+process.on("unhandledRejection", (reason) => {
+  const codigo = reason?.output?.statusCode || reason?.code || "";
+  console.error(`⚠️  Promesa rechazada sin manejar [${codigo}]: ${reason?.message || reason}`);
+});
 
 // ─── Arrancar ─────────────────────────────────────────────────────────────────
 

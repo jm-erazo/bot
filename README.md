@@ -1,8 +1,49 @@
-# 🤖 WhatsApp Bot Empresarial v3.5.0
+# 🤖 WhatsApp Bot Empresarial v3.5.2
 
 Bot de WhatsApp con IA (Google Gemini), comandos empresariales y un perfil de empresa simulada completo.
 
 Arquitectura de un solo archivo (`index.js`) sobre Baileys v7 + `@google/generative-ai`, con persistencia en JSON. La v3.4 **no cambia la arquitectura**: reduce el consumo de tokens cargando el contexto de la empresa bajo demanda.
+
+---
+
+## 🗂️ Sesión y formato v3.5.2
+
+**Credenciales aisladas.** La sesión se guarda separada:
+- `auth_folder/` → **solo** `creds.json` y su respaldo `creds.json.bak`.
+- `auth_folder/keys/` → las claves de cifrado de Baileys (obligatorias para
+  descifrar mensajes; no pueden eliminarse, pero quedan aparte de las creds).
+
+Se implementa con un auth state propio (`useAuthStateSeparado`) de escritura
+atómica, en vez del `useMultiFileAuthState` estándar que mezclaba todo. Si
+`creds.json` se corrompe, se restaura del `.bak` sin re-escanear el QR.
+
+**Títulos en negrita.** El formateador ahora convierte `***texto***` y
+`___texto___` (negrita+cursiva de Markdown) a `*texto*` (negrita de WhatsApp),
+además de los `**texto**` que ya manejaba. Los títulos de las respuestas de la
+IA salen en negrita limpia, sin asteriscos sueltos.
+
+---
+
+## 🛡️ Estabilidad v3.5.1 (el bot no se cae)
+
+Se corrigió el crash que cerraba la sesión cuando un usuario escribía: al enviar
+sobre un socket ya cerrado, Baileys lanza un error `428 "Connection Closed"` que
+—sin captura— tumbaba todo el proceso; el hosting reiniciaba y, a media
+escritura, la sesión se corrompía.
+
+Qué cambió:
+- **Red de seguridad global.** `uncaughtException` y `unhandledRejection`: un
+  fallo puntual ya no mata el bot; se registra y sigue vivo. La reconexión de
+  WhatsApp la maneja `connection.update`.
+- **Envíos blindados.** `estaConectado()` comprueba el socket antes de enviar;
+  `send()`, `sendConImagen()`, `sendReaccion()` y `presencia()` nunca lanzan.
+- **Aislamiento por mensaje.** Cada mensaje entrante corre en su propio
+  try/catch: si uno falla, se omite y el resto se atiende igual.
+- **Sesión a prueba de fallos.** `creds.json` vive en su carpeta dedicada y se
+  respalda (`creds.json.bak`) tras cada guardado válido. Si se corrompe, se
+  restaura del respaldo en vez de pedir re-escanear el QR.
+- **Baileys fijado** a `7.0.0-rc14` (antes `"latest"`, que podía traer una
+  versión rota como la rc.8 que rompía el envío con 428).
 
 ---
 
@@ -153,7 +194,7 @@ Todo se controla desde `construirSystemPrompt()`, `COMPILAR_MODULO` e `INTENCION
 ```bash
 npm install
 npm start      # menú interactivo: API Key → método de conexión
-npm test       # 88 verificaciones sobre las funciones críticas
+npm test       # 106 verificaciones sobre las funciones críticas
 ```
 
 Requiere Node.js ≥ 18 (probado en 22). La API Key de Gemini se obtiene gratis en
@@ -306,7 +347,7 @@ de WhatsApp contaban como la misma persona, y cambiar el nombre permitía votar 
 
 ## 🧪 Pruebas
 
-`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 88 verificaciones:
+`npm test` carga el `index.js` real (recorta solo el arranque interactivo) y ejecuta 106 verificaciones:
 
 - **`clasificarErrorGemini`** (10): incluida la regresión del Bug 1 — un 403 que menciona cuota debe
   clasificarse como `cuota` y **no** descartar la clave.
@@ -334,7 +375,7 @@ auth_info_baileys/    Sesión de WhatsApp (se genera sola; ignorada por git)
 
 ## 🧪 Pruebas de la optimización
 
-`npm test` ejecuta 88 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
+`npm test` ejecuta 106 verificaciones. Las de la v3.4 cubren: prompt base ≤ 500 tokens; el enrutador
 `detectarModulos` acierta en saludos, precio, pago, confidencialidad, identidad, contacto, alcance y
 consultas mixtas; el contexto del turno trae solo lo pedido; y **ningún** módulo expone el organigrama,
 los cargos, los indicadores ni los planes de crecimiento.
